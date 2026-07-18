@@ -2,6 +2,27 @@
 
 Sicherer, lokaler Maildienst für NOEMA/Lumi. Das Gateway soll GMX über IMAP anbinden, Entwürfe kontrolliert erzeugen und später nur nach technischer Freigabe versenden.
 
+## Spickzettel: Bedienung auf VM02 (für Sandra)
+
+```bash
+# Installation / Update auf neuen Code-Stand (Skripte liegen in /home/noema):
+sudo bash m9_install.sh
+
+# GMX-Anwendungspasswort (neu) setzen — zeigt Länge + erste 2 Zeichen zur Kontrolle:
+sudo bash m9_credential.sh
+
+# Dienst steuern:
+sudo systemctl restart noema-mail-gateway     # neu starten
+sudo systemctl stop noema-mail-gateway        # AUS (Lumi hat sofort keinen Mailzugriff mehr)
+systemctl status noema-mail-gateway --no-pager -l   # Status ansehen
+journalctl -u noema-mail-gateway -n 30 --no-pager   # letzte Logzeilen
+
+# Not-Aus komplett: zusätzlich bei GMX das Anwendungspasswort löschen.
+```
+
+Konto/Server stehen in `/etc/noema-mail/environment`; das Passwort liegt nur in
+`/etc/noema-mail/gmx_app_password.cred` (root-only) — nirgendwo sonst.
+
 ## Status
 
 Der lokale Mock-Umfang einschließlich Unix-Socket, IMAP-Leseweg,
