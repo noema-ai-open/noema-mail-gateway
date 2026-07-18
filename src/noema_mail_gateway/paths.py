@@ -69,8 +69,12 @@ class RuntimePaths:
         if isinstance(mode, bool) or not isinstance(mode, int) or not 0 <= mode <= 0o777:
             raise ValidationError("directory mode must be an integer from 0000 to 0777")
 
-        for directory in (self.state_dir, self.staging_dir, self.runtime_dir):
+        for directory in (self.state_dir, self.staging_dir):
             self._ensure_directory(directory, mode)
+        # Das Laufzeitverzeichnis trägt den Client-Socket: Gruppenzugriff ohne
+        # Schreibrecht (0750) ist hier zulässig, damit die Socket-Gruppe
+        # (noema-mail-client) den Socket erreichen kann. Welt-Rechte bleiben verboten.
+        self._ensure_directory(self.runtime_dir, mode | 0o050)
 
     @staticmethod
     def _ensure_directory(directory: Path, mode: int) -> None:

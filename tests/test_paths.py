@@ -51,11 +51,16 @@ def test_ensure_creates_all_directories_with_private_permissions(tmp_path: Path)
 
     paths.ensure()
 
-    for directory in (paths.state_dir, paths.staging_dir, paths.runtime_dir):
+    for directory in (paths.state_dir, paths.staging_dir):
         metadata = directory.lstat()
         assert stat.S_ISDIR(metadata.st_mode)
         assert metadata.st_uid == os.getuid()
         assert stat.S_IMODE(metadata.st_mode) == 0o700
+
+    runtime_metadata = paths.runtime_dir.lstat()
+    assert stat.S_ISDIR(runtime_metadata.st_mode)
+    # Socket-Verzeichnis: Gruppen-Lesen/Betreten erlaubt, nie Gruppen-Schreiben oder Welt.
+    assert stat.S_IMODE(runtime_metadata.st_mode) & ~0o750 == 0
 
 
 def test_symlink_in_place_of_state_directory_is_rejected(tmp_path: Path) -> None:
@@ -79,3 +84,23 @@ def test_existing_overly_open_directory_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeSecurityError):
         paths.ensure()
+
+
+def test_runtime_dir_grants_group_read_but_never_write(tmp_path, monkeypatch):
+    from noema_mail_core import RuntimeSecurityError
+    from noema_mail_gateway.paths import RuntimePaths
+
+    state = tmp_path / "state"
+    runtime = tmp_path / "run"
+    paths = RuntimePaths(state_dir=state, runtime_dir=runtime)
+    runtime.mkdir(mode=0o750)
+    paths.ensure()  # 0750 am Laufzeitverzeichnis ist zulässig (Socket-Gruppe)
+    assert (state.stat().st_mode & 0o777) == 0o700
+
+    runtime.chmod(0o770)  # Gruppen-SCHREIBRECHT bleibt verboten
+    try:
+        paths.ensure()
+    except RuntimeSecurityError:
+        pass
+    else:
+        raise AssertionError("group-writable runtime dir must be rejected")
