@@ -22,7 +22,13 @@ from .contracts import (
     MailUpdateDraftResponse,
     validate_request,
 )
-from .exceptions import InvalidTransitionError, MailCoreError, ValidationError
+from .exceptions import (
+    CredentialError,
+    InvalidTransitionError,
+    MailCoreError,
+    RuntimeSecurityError,
+    ValidationError,
+)
 from .hashing import content_hash
 from .models import (
     MAX_ATTACHMENT_SIZE,
@@ -34,6 +40,7 @@ from .models import (
     EmailAddress,
 )
 from .redaction import redact
+from .secrets import SecretValue
 from .status import DraftStatus, transition
 
 __all__ = [
@@ -46,6 +53,7 @@ __all__ = [
     "AttachmentRef",
     "CaseContext",
     "ContractValidationError",
+    "CredentialError",
     "Draft",
     "DraftStatus",
     "EmailAddress",
@@ -66,6 +74,8 @@ __all__ = [
     "MailSearchResponse",
     "MailUpdateDraftRequest",
     "MailUpdateDraftResponse",
+    "RuntimeSecurityError",
+    "SecretValue",
     "ValidationError",
     "content_hash",
     "redact",

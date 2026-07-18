@@ -1,0 +1,44 @@
+# VORLAGE — nicht ohne Freigabe installieren
+# Diese Unit wird erst mit dem Server aus M7 vervollständigt und in M9 freigegeben.
+
+[Unit]
+Description=NOEMA Mail Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=noema-mail
+Group=noema-mail
+RuntimeDirectory=noema-mail
+RuntimeDirectoryMode=0700
+StateDirectory=noema-mail
+StateDirectoryMode=0700
+UMask=0077
+
+LoadCredential=gmx_app_password:/etc/noema-mail/gmx_app_password.cred
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ReadWritePaths=/var/lib/noema-mail
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+
+# M3 muss ausschließlich die benötigten IMAP-Zielnetze festlegen, zum Beispiel:
+# IPAddressAllow=<GMX-IMAP-Zielnetz>
+
+# Platzhalter bis zur Implementierung des Gateway-Servers in M7:
+# ExecStart=/usr/bin/noema-mail-gateway
+
+[Install]
+WantedBy=multi-user.target
