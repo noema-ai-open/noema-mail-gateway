@@ -1,3 +1,9 @@
+---
+name: mail
+description: NOEMA-Mail-Gateway – GMX über lokalen Socket durchsuchen, lesen und Entwürfe pflegen (draft-first, kein Versand).
+metadata: {"clawdbot":{"emoji":"📬","requires":{"bins":["python3"]}}}
+---
+
 # Mail
 
 Dieser Skill stellt OpenClaw den lokalen NOEMA-Mail-Gateway-Dienst über
