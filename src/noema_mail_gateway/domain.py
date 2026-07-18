@@ -1,30 +1,6 @@
-"""Initial domain boundary for NOEMA Mail Gateway.
+"""Compatibility re-export of the standard-library-only core domain."""
 
-Fable 5 must approve the final domain model before implementation expands.
-No IMAP, SMTP, OpenClaw, MCP, browser, or Thunderbird dependency belongs here.
-"""
+import noema_mail_core as _core
+from noema_mail_core import *  # noqa: F403
 
-from dataclasses import dataclass
-from enum import StrEnum
-
-
-class DraftStatus(StrEnum):
-    CREATED = "created"
-    SYNCHRONIZED = "synchronized"
-    CHANGED = "changed"
-    AWAITING_APPROVAL = "awaiting_approval"
-    APPROVED = "approved"
-    SENDING = "sending"
-    SENT = "sent"
-    APPROVAL_EXPIRED = "approval_expired"
-    REJECTED = "rejected"
-    FAILED = "failed"
-
-
-@dataclass(frozen=True, slots=True)
-class DraftReference:
-    """Minimal immutable reference used by tests and architecture work."""
-
-    draft_id: str
-    version: int
-    status: DraftStatus
+__all__ = _core.__all__
