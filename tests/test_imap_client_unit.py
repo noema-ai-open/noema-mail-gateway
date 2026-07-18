@@ -173,3 +173,25 @@ def test_authentication_failure_hides_server_echo_even_in_traceback() -> None:
     assert caught.value.error_code is ErrorCode.AUTH_ERROR
     assert CREDENTIAL_CANARY not in rendered
     assert "LOGIN" not in caught.value.safe_message.upper()
+
+
+def test_search_sends_text_criterion_for_free_text() -> None:
+    """Freitext muss als TEXT "..." gesendet werden — GMX lehnt rohe Begriffe ab."""
+    from noema_mail_gateway.imap_client import ImapReadOnlyClient
+
+    calls: list[tuple] = []
+
+    class _Recorder:
+        def uid(self, *args):
+            calls.append(args)
+            return "OK", [b""]
+
+    client = ImapReadOnlyClient.__new__(ImapReadOnlyClient)
+    client._connection = _Recorder()
+    client._selected_folder = "INBOX"
+    client.search('Sozialamt "Bescheid"', 5)
+    assert calls[0] == ("SEARCH", "TEXT", '"Sozialamt \\"Bescheid\\""')
+
+    calls.clear()
+    client.search("ALL", 5)
+    assert calls[0] == ("SEARCH", "ALL")

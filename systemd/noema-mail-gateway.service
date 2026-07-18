@@ -8,6 +8,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+Restart=on-failure
+RestartSec=5
 User=noema-mail
 Group=noema-mail
 RuntimeDirectory=noema-mail

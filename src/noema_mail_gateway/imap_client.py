@@ -165,7 +165,21 @@ class ImapReadOnlyClient:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("limit must be a positive integer")
         self._require_selected()
-        status, data = self._uid("SEARCH", None, query)
+        # Freitext als korrektes IMAP-Kriterium senden: echte Server (GMX) lehnen
+        # rohe Begriffe ab. "ALL" bleibt als explizites Kriterium erlaubt.
+        if query == "ALL":
+            status, data = self._uid("SEARCH", "ALL")
+        else:
+            try:
+                query.encode("ascii")
+            except UnicodeEncodeError:
+                connection = self._connection
+                if connection is not None:
+                    connection.literal = query.encode("utf-8")
+                status, data = self._uid("SEARCH", "CHARSET", "UTF-8", "TEXT")
+            else:
+                escaped = query.replace("\\", "\\\\").replace('"', '\\"')
+                status, data = self._uid("SEARCH", "TEXT", f'"{escaped}"')
         if status != "OK":
             raise ImapClientError("IMAP search failed", ErrorCode.INTERNAL_ERROR)
         raw_uids = data[0] if data else b""
