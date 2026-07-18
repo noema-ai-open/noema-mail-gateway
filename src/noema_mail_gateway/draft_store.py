@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from pathlib import Path
 from types import TracebackType
 
 import noema_mail_core.status as status_model
-from noema_mail_core import Draft, DraftStatus, ErrorCode, MailCoreError
+from noema_mail_core import AttachmentRef, Draft, DraftStatus, ErrorCode, MailCoreError
 
 from .paths import RuntimePaths
 
@@ -67,9 +68,10 @@ class DraftStore:
         if not database.is_absolute():
             raise ValueError("draft database path must be absolute")
         self._database = database
+        self._lock = threading.RLock()
         self._prepare_file(database)
         self._connection: sqlite3.Connection | None = sqlite3.connect(
-            database, isolation_level=None
+            database, isolation_level=None, check_same_thread=False
         )
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
@@ -93,9 +95,10 @@ class DraftStore:
     def close(self) -> None:
         """Close the database connection."""
 
-        connection, self._connection = self._connection, None
-        if connection is not None:
-            connection.close()
+        with self._lock:
+            connection, self._connection = self._connection, None
+            if connection is not None:
+                connection.close()
 
     def create(
         self,
@@ -146,18 +149,51 @@ class DraftStore:
     def get(self, draft_id: str) -> DraftRecord | None:
         """Return one draft's metadata, or ``None`` when it is unknown."""
 
-        row = self._require_connection().execute(
-            "SELECT * FROM drafts WHERE draft_id = ?", (draft_id,)
-        ).fetchone()
+        with self._lock:
+            row = self._require_connection().execute(
+                "SELECT * FROM drafts WHERE draft_id = ?", (draft_id,)
+            ).fetchone()
         return None if row is None else self._draft_record(row)
 
     def list(self) -> list[DraftRecord]:
         """Return all metadata records in stable creation order."""
 
-        rows = self._require_connection().execute(
-            "SELECT * FROM drafts ORDER BY created_at, draft_id"
-        ).fetchall()
+        with self._lock:
+            rows = self._require_connection().execute(
+                "SELECT * FROM drafts ORDER BY created_at, draft_id"
+            ).fetchall()
         return [self._draft_record(row) for row in rows]
+
+    def set_tracking(
+        self,
+        draft_id: str,
+        *,
+        revision: int,
+        content_hash: str,
+        uid: str | None,
+        uidvalidity: int | None,
+        updated_at: datetime | None = None,
+    ) -> DraftRecord:
+        """Store confirmed server tracking for the current revision."""
+
+        self._validate_tracking(uid, uidvalidity)
+        timestamp = updated_at or datetime.now(UTC)
+        with self._transaction():
+            current = self._get_required(draft_id)
+            if revision != current.revision or content_hash != current.content_hash:
+                raise DraftStoreError(
+                    "confirmed tracking does not match the current revision",
+                    ErrorCode.CONFLICT,
+                )
+            self._require_connection().execute(
+                """
+                UPDATE drafts
+                SET uid = ?, uidvalidity = ?, updated_at = ?
+                WHERE draft_id = ?
+                """,
+                (uid, uidvalidity, self._format_time(timestamp), draft_id),
+            )
+            return self._get_required(draft_id)
 
     def update(
         self,
@@ -261,10 +297,11 @@ class DraftStore:
             return cursor.rowcount == 1
 
     def get_idempotency(self, key: str) -> IdempotencyRecord | None:
-        row = self._require_connection().execute(
-            "SELECT key, draft_id, operation, created_at FROM idempotency WHERE key = ?",
-            (key,),
-        ).fetchone()
+        with self._lock:
+            row = self._require_connection().execute(
+                "SELECT key, draft_id, operation, created_at FROM idempotency WHERE key = ?",
+                (key,),
+            ).fetchone()
         if row is None:
             return None
         return IdempotencyRecord(
@@ -273,6 +310,126 @@ class DraftStore:
             operation=row["operation"],
             created_at=self._parse_time(row["created_at"]),
         )
+
+    def bind_idempotency(self, key: str, draft_id: str, operation: str) -> DraftRecord:
+        """Bind a completed non-revision outcome such as a detected conflict."""
+
+        self._validate_idempotency(key, operation)
+        with self._transaction():
+            record = self._get_required(draft_id)
+            replay = self._replay(key, operation)
+            if replay is not None:
+                return replay
+            self._bind_idempotency(key, draft_id, operation)
+            return record
+
+    def get_attachment(self, attachment_id: str) -> AttachmentRef | None:
+        """Return persisted staging metadata without reading attachment bytes."""
+
+        with self._lock:
+            row = self._require_connection().execute(
+                "SELECT * FROM attachments WHERE attachment_id = ?", (attachment_id,)
+            ).fetchone()
+        return None if row is None else self._attachment_ref(row)
+
+    def get_attachment_replay(self, key: str, operation: str) -> AttachmentRef | None:
+        """Resolve an attachment idempotency key and reject cross-operation reuse."""
+
+        with self._lock:
+            row = self._require_connection().execute(
+                """
+                SELECT operation, attachment_id
+                FROM attachment_idempotency
+                WHERE key = ?
+                """,
+                (key,),
+            ).fetchone()
+            if row is None:
+                if self.get_idempotency(key) is not None:
+                    raise DraftStoreError(
+                        "idempotency key is bound to another operation",
+                        ErrorCode.CONFLICT,
+                    )
+                return None
+            if row["operation"] != operation:
+                raise DraftStoreError(
+                    "idempotency key is bound to another operation", ErrorCode.CONFLICT
+                )
+            attachment = self.get_attachment(row["attachment_id"])
+        if attachment is None:
+            raise DraftStoreError("staged attachment was not found", ErrorCode.NOT_FOUND)
+        return attachment
+
+    def attachment_idempotency_operation(self, key: str) -> str | None:
+        """Return the operation bound in the attachment idempotency namespace."""
+
+        with self._lock:
+            row = self._require_connection().execute(
+                "SELECT operation FROM attachment_idempotency WHERE key = ?", (key,)
+            ).fetchone()
+        return None if row is None else str(row["operation"])
+
+    def save_attachment(
+        self, ref: AttachmentRef, *, idempotency_key: str, operation: str
+    ) -> AttachmentRef:
+        """Persist attachment metadata and its idempotency binding atomically."""
+
+        if not isinstance(ref, AttachmentRef):
+            raise TypeError("ref must be an AttachmentRef")
+        self._validate_idempotency(idempotency_key, operation)
+        with self._transaction():
+            replay = self.get_attachment_replay(idempotency_key, operation)
+            if replay is not None:
+                return replay
+            try:
+                self._require_connection().execute(
+                    """
+                    INSERT INTO attachments (
+                        attachment_id, sha256, display_name, mime_type, size,
+                        staging_reference, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        ref.attachment_id,
+                        ref.sha256,
+                        ref.display_name,
+                        ref.mime_type,
+                        ref.size,
+                        ref.staging_reference,
+                        self._format_time(datetime.now(UTC)),
+                    ),
+                )
+                self._require_connection().execute(
+                    """
+                    INSERT INTO attachment_idempotency (
+                        key, attachment_id, operation, created_at
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        idempotency_key,
+                        ref.attachment_id,
+                        operation,
+                        self._format_time(datetime.now(UTC)),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DraftStoreError(
+                    "attachment metadata already exists", ErrorCode.CONFLICT
+                ) from exc
+            return ref
+
+    def fail_incomplete(self) -> list[DraftRecord]:
+        """Move crash-left ``new``/``staged`` records to ``failed`` safely."""
+
+        incomplete = [
+            record
+            for record in self.list()
+            if record.status in {DraftStatus.NEW, DraftStatus.STAGED}
+        ]
+        return [
+            self.transition_status(record.draft_id, DraftStatus.FAILED)
+            for record in incomplete
+        ]
 
     @staticmethod
     def _prepare_file(database: Path) -> None:
@@ -314,6 +471,30 @@ class DraftStore:
             )
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS attachments (
+                    attachment_id TEXT PRIMARY KEY,
+                    sha256 TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    size INTEGER NOT NULL CHECK (size > 0),
+                    staging_reference TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS attachment_idempotency (
+                    key TEXT PRIMARY KEY,
+                    attachment_id TEXT NOT NULL
+                        REFERENCES attachments(attachment_id) ON DELETE CASCADE,
+                    operation TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS idempotency (
                     key TEXT PRIMARY KEY,
                     draft_id TEXT NOT NULL REFERENCES drafts(draft_id) ON DELETE CASCADE,
@@ -325,21 +506,29 @@ class DraftStore:
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
-        connection = self._require_connection()
-        connection.execute("BEGIN IMMEDIATE")
-        try:
-            yield
-        except BaseException:
-            connection.execute("ROLLBACK")
-            raise
-        else:
-            connection.execute("COMMIT")
+        with self._lock:
+            connection = self._require_connection()
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+            else:
+                connection.execute("COMMIT")
 
     def _replay(self, key: str | None, operation: str) -> DraftRecord | None:
         if key is None:
             return None
         binding = self.get_idempotency(key)
         if binding is None:
+            attachment = self._require_connection().execute(
+                "SELECT operation FROM attachment_idempotency WHERE key = ?", (key,)
+            ).fetchone()
+            if attachment is not None:
+                raise DraftStoreError(
+                    "idempotency key is bound to another operation", ErrorCode.CONFLICT
+                )
             return None
         if binding.operation != operation:
             raise DraftStoreError(
@@ -406,6 +595,17 @@ class DraftStore:
             uidvalidity=row["uidvalidity"],
             created_at=cls._parse_time(row["created_at"]),
             updated_at=cls._parse_time(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _attachment_ref(row: sqlite3.Row) -> AttachmentRef:
+        return AttachmentRef(
+            attachment_id=row["attachment_id"],
+            sha256=row["sha256"],
+            display_name=row["display_name"],
+            mime_type=row["mime_type"],
+            size=row["size"],
+            staging_reference=row["staging_reference"],
         )
 
     @staticmethod

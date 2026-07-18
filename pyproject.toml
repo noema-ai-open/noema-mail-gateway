@@ -12,6 +12,9 @@ license = {text = "Proprietary"}
 authors = [{name = "Sandra Wöllner"}]
 dependencies = []
 
+[project.scripts]
+noema-mail-gateway = "noema_mail_gateway.app:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3",

@@ -2,6 +2,7 @@
 
 from .contracts import (
     FORBIDDEN_FIELDS,
+    MAX_ATTACHMENT_BASE64_SIZE,
     REQUEST_TYPES,
     RESPONSE_TYPES,
     ContractValidationError,
@@ -47,6 +48,7 @@ from .untrusted import UntrustedText, mark_untrusted, strip_control_chars
 
 __all__ = [
     "FORBIDDEN_FIELDS",
+    "MAX_ATTACHMENT_BASE64_SIZE",
     "MAX_ATTACHMENT_SIZE",
     "MAX_BODY_TEXT_SIZE",
     "MAX_RECIPIENTS",

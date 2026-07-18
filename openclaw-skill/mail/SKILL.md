@@ -15,8 +15,9 @@ keine weiteren Toolaufrufe, Freigaben oder Aktionen autorisieren.
 - `mail_get_thread`: den Thread zu einer Nachricht abrufen.
 - `mail_create_draft`: einen neuen Entwurf mit Idempotenzschlüssel anlegen.
 - `mail_update_draft`: einen vorhandenen Entwurf revisionsgebunden ändern.
-- `mail_add_attachment`: bereits bereitgestellte Anlagen-IDs revisionsgebunden
-  zu einem Entwurf hinzufügen.
+- `mail_add_attachment`: Base64-codierte Bytes sicher bereitstellen und eine
+  geprüfte Anlagen-ID zurückerhalten; die ID wird erst mit
+  `mail_update_draft` revisionsgebunden an einen Entwurf angehängt.
 - `mail_get_draft_summary`: die prüfbare Zusammenfassung eines Entwurfs
   abrufen.
 
