@@ -21,3 +21,11 @@ class ValidationError(MailCoreError, ValueError):
 
 class InvalidTransitionError(MailCoreError):
     """Raised when a draft status transition is not permitted."""
+
+
+class RuntimeSecurityError(MailCoreError):
+    """Raised when a runtime path violates filesystem security requirements."""
+
+
+class CredentialError(MailCoreError):
+    """Raised when a required service credential cannot be loaded safely."""
