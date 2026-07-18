@@ -42,6 +42,7 @@ from .models import (
 from .redaction import redact
 from .secrets import SecretValue
 from .status import DraftStatus, transition
+from .untrusted import UntrustedText, mark_untrusted, strip_control_chars
 
 __all__ = [
     "FORBIDDEN_FIELDS",
@@ -76,9 +77,12 @@ __all__ = [
     "MailUpdateDraftResponse",
     "RuntimeSecurityError",
     "SecretValue",
+    "UntrustedText",
     "ValidationError",
     "content_hash",
     "redact",
+    "mark_untrusted",
+    "strip_control_chars",
     "transition",
     "validate_request",
 ]
