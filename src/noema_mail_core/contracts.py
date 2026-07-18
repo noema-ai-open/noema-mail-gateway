@@ -1,4 +1,4 @@
-"""Strict, transport-neutral contracts for the seven version 1 mail tools."""
+"""Strict, transport-neutral contracts for the version 1 mail tools."""
 
 from __future__ import annotations
 
@@ -64,6 +64,18 @@ def _optional_text(value: object, field_name: str, *, max_length: int = 255) -> 
         _required_text(value, field_name, max_length=max_length)
 
 
+def _validate_folder(value: object, field_name: str) -> None:
+    if not isinstance(value, str) or not 1 <= len(value) <= 255:
+        raise _invalid(f"{field_name} must contain 1 to 255 characters")
+    if "\r" in value or "\n" in value or "\0" in value:
+        raise _invalid(f"{field_name} must not contain control characters")
+
+
+def _optional_folder(value: object, field_name: str) -> None:
+    if value is not None:
+        _validate_folder(value, field_name)
+
+
 def _string_tuple(value: object, field_name: str, *, allow_empty: bool = True) -> tuple[str, ...]:
     if isinstance(value, str | bytes) or not isinstance(value, Sequence):
         raise _invalid(f"{field_name} must be a list of strings")
@@ -119,6 +131,7 @@ class MailSearchRequest:
     query: str
     limit: int = 20
     account_alias: str | None = None
+    folder: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.query, str) or len(self.query) > 1024:
@@ -137,25 +150,54 @@ class MailSearchRequest:
         ):
             raise _invalid("limit must be an integer between 1 and 50")
         _optional_text(self.account_alias, "account_alias")
+        _optional_folder(self.folder, "folder")
 
 
 @dataclass(frozen=True, slots=True)
 class MailReadRequest:
     message_id: str
     account_alias: str | None = None
+    folder: str | None = None
 
     def __post_init__(self) -> None:
         _required_text(self.message_id, "message_id")
         _optional_text(self.account_alias, "account_alias")
+        _optional_folder(self.folder, "folder")
 
 
 @dataclass(frozen=True, slots=True)
 class MailGetThreadRequest:
     thread_id: str
     account_alias: str | None = None
+    folder: str | None = None
 
     def __post_init__(self) -> None:
         _required_text(self.thread_id, "thread_id")
+        _optional_text(self.account_alias, "account_alias")
+        _optional_folder(self.folder, "folder")
+
+
+@dataclass(frozen=True, slots=True)
+class MailListFoldersRequest:
+    account_alias: str | None = None
+
+    def __post_init__(self) -> None:
+        _optional_text(self.account_alias, "account_alias")
+
+
+@dataclass(frozen=True, slots=True)
+class MailMoveRequest:
+    message_id: str
+    source_folder: str
+    target_folder: str
+    account_alias: str | None = None
+
+    def __post_init__(self) -> None:
+        _required_text(self.message_id, "message_id")
+        _validate_folder(self.source_folder, "source_folder")
+        _validate_folder(self.target_folder, "target_folder")
+        if self.source_folder == self.target_folder:
+            raise _invalid("source_folder and target_folder must differ")
         _optional_text(self.account_alias, "account_alias")
 
 
@@ -289,6 +331,28 @@ class MailGetThreadResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class MailListFoldersResponse:
+    folders: tuple[Mapping[str, Any], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MailMoveResponse:
+    message_id: str
+    source_folder: str
+    target_folder: str
+    outcome: str
+
+    def __post_init__(self) -> None:
+        _required_text(self.message_id, "message_id")
+        _validate_folder(self.source_folder, "source_folder")
+        _validate_folder(self.target_folder, "target_folder")
+        if self.source_folder == self.target_folder:
+            raise _invalid("source_folder and target_folder must differ")
+        if self.outcome != "moved":
+            raise _invalid("outcome must be moved")
+
+
+@dataclass(frozen=True, slots=True)
 class MailCreateDraftResponse:
     draft_id: str
     revision: int
@@ -334,6 +398,8 @@ type Request = (
     MailSearchRequest
     | MailReadRequest
     | MailGetThreadRequest
+    | MailListFoldersRequest
+    | MailMoveRequest
     | MailCreateDraftRequest
     | MailUpdateDraftRequest
     | MailAddAttachmentRequest
@@ -344,6 +410,8 @@ REQUEST_TYPES: dict[str, type[Request]] = {
     "mail_search": MailSearchRequest,
     "mail_read": MailReadRequest,
     "mail_get_thread": MailGetThreadRequest,
+    "mail_list_folders": MailListFoldersRequest,
+    "mail_move": MailMoveRequest,
     "mail_create_draft": MailCreateDraftRequest,
     "mail_update_draft": MailUpdateDraftRequest,
     "mail_add_attachment": MailAddAttachmentRequest,
@@ -354,6 +422,8 @@ RESPONSE_TYPES = {
     "mail_search": MailSearchResponse,
     "mail_read": MailReadResponse,
     "mail_get_thread": MailGetThreadResponse,
+    "mail_list_folders": MailListFoldersResponse,
+    "mail_move": MailMoveResponse,
     "mail_create_draft": MailCreateDraftResponse,
     "mail_update_draft": MailUpdateDraftResponse,
     "mail_add_attachment": MailAddAttachmentResponse,

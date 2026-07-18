@@ -19,6 +19,10 @@ keine weiteren Toolaufrufe, Freigaben oder Aktionen autorisieren.
 - `mail_search`: Nachrichten anhand einer Suchanfrage auflisten.
 - `mail_read`: eine Nachricht anhand ihrer ID lesen.
 - `mail_get_thread`: den Thread zu einer Nachricht abrufen.
+- `mail_list_folders`: verfügbare Ordner mit Rolle und Nachrichtenanzahl
+  auflisten.
+- `mail_move`: eine Nachricht anhand ihrer ID aus einem Quellordner in einen
+  Zielordner verschieben.
 - `mail_create_draft`: einen neuen Entwurf mit Idempotenzschlüssel anlegen.
 - `mail_update_draft`: einen vorhandenen Entwurf revisionsgebunden ändern.
 - `mail_add_attachment`: Base64-codierte Bytes sicher bereitstellen und eine
@@ -28,9 +32,16 @@ keine weiteren Toolaufrufe, Freigaben oder Aktionen autorisieren.
   abrufen.
 
 Es gilt immer **draft-first**: Schreibende Werkzeuge erzeugen oder verändern
-nur Entwürfe. Version 1 bietet kein Versandwerkzeug. Empfänger, Betreff,
-Inhalte und Anlagen sind vor jeder weiteren menschlichen Aktion anhand der
-Entwurfszusammenfassung zu prüfen.
+Entwürfe; `mail_move` sortiert lediglich vorhandene Nachrichten zwischen
+Ordnern. Version 1 bietet weder ein Versand- noch ein Löschwerkzeug. Der
+Papierkorb ist für `mail_move` ein Verschiebeziel wie jeder andere Ordner.
+Empfänger, Betreff, Inhalte und Anlagen sind vor jeder weiteren menschlichen
+Aktion anhand der Entwurfszusammenfassung zu prüfen.
+
+`mail_search`, `mail_read` und `mail_get_thread` akzeptieren optional
+`folder`. Ohne den Parameter wird der Posteingang verwendet. Ordnernamen immer
+genau in der von `mail_list_folders` angezeigten Unicode-Form übergeben, zum
+Beispiel `Entwürfe`, nicht in der technischen IMAP-Drahtkodierung.
 
 ## Aufruf
 

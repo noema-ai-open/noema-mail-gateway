@@ -195,3 +195,33 @@ def test_search_sends_text_criterion_for_free_text() -> None:
     calls.clear()
     client.search("ALL", 5)
     assert calls[0] == ("SEARCH", "ALL")
+
+
+def test_list_folders_parses_gmx_lines_roles_and_status_counts() -> None:
+    class FolderConnection(FakeConnection):
+        def list(self, reference: str, pattern: str) -> tuple[str, list[bytes]]:
+            assert (reference, pattern) == ('""', "*")
+            return "OK", [
+                b'(\\HasNoChildren) "/" INBOX',
+                b'(\\Drafts \\NoInferiors) "/" Entw&APw-rfe',
+                b'(\\HasNoChildren) "/" "Games Pay"',
+                b'(\\Noselect) "/" Parent',
+            ]
+
+        def status(self, folder: str, query: str) -> tuple[str, list[bytes]]:
+            assert query == "(MESSAGES)"
+            counts = {"INBOX": 2, "Entw&APw-rfe": 4, '"Games Pay"': 1}
+            return "OK", [f"{folder} (MESSAGES {counts[folder]})".encode()]
+
+    with configured_client(FolderConnection({})) as client:
+        folders = client.list_folders()
+
+    assert [folder.name for folder in folders] == [
+        "INBOX",
+        "Entwürfe",
+        "Games Pay",
+        "Parent",
+    ]
+    assert [folder.role for folder in folders] == ["inbox", "drafts", "other", "other"]
+    assert [folder.message_count for folder in folders] == [2, 4, 1, 0]
+    assert folders[1].raw_name == "Entw&APw-rfe"

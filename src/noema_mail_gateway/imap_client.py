@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import imaplib
+import re
 import ssl
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -10,10 +11,27 @@ from types import TracebackType
 
 from noema_mail_core import ErrorCode, MailCoreError, SecretValue
 
+from .imap_folders import decode_folder
 from .mailparse import Message, MessageSummary, parse_message, parse_summary
 
 type ImapConnection = imaplib.IMAP4
 type ImapFactory = Callable[[str, int, float], ImapConnection]
+
+_LIST_RESPONSE = re.compile(
+    r'^\((?P<flags>[^)]*)\)\s+(?:NIL|"(?:\\.|[^"\\])*")\s+(?P<name>.+)\Z',
+    re.IGNORECASE,
+)
+_STATUS_MESSAGES = re.compile(r"\bMESSAGES\s+(\d+)\b", re.IGNORECASE)
+
+
+@dataclass(frozen=True, slots=True)
+class FolderInfo:
+    """One selectable or visible IMAP folder."""
+
+    raw_name: str
+    name: str
+    role: str
+    message_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,10 +170,46 @@ class ImapReadOnlyClient:
 
         if not isinstance(folder, str) or not folder or "\r" in folder or "\n" in folder:
             raise ValueError("folder must be a non-empty string")
-        status, _ = self._call("select", folder, True)
+        status, _ = self._call("select", self._mailbox_argument(folder), True)
         if status != "OK":
             raise ImapClientError("IMAP folder could not be selected", ErrorCode.NOT_FOUND)
         self._selected_folder = folder
+
+    def list_folders(self) -> list[FolderInfo]:
+        """List folders with decoded names, roles, and message counts."""
+
+        status, data = self._call("list", '""', "*")
+        if status != "OK":
+            raise ImapClientError("IMAP folder list failed", ErrorCode.INTERNAL_ERROR)
+
+        folders: list[FolderInfo] = []
+        for item in data:
+            if item is None:
+                continue
+            if not isinstance(item, bytes):
+                raise ImapClientError(
+                    "IMAP folder list is invalid", ErrorCode.INTERNAL_ERROR
+                )
+            flags, raw_name = self._parse_list_response(item)
+            try:
+                name = decode_folder(raw_name)
+            except ValueError as exc:
+                raise ImapClientError(
+                    "IMAP folder name is invalid", ErrorCode.INTERNAL_ERROR
+                ) from exc
+            message_count = 0
+            normalized_flags = {flag.upper() for flag in flags}
+            if "\\NOSELECT" not in normalized_flags:
+                message_count = self._message_count(raw_name)
+            folders.append(
+                FolderInfo(
+                    raw_name=raw_name,
+                    name=name,
+                    role=self._folder_role(name, normalized_flags),
+                    message_count=message_count,
+                )
+            )
+        return folders
 
     def search(self, query: str, limit: int) -> list[MessageSummary]:
         """Search the selected folder and return at most *limit* summaries."""
@@ -261,6 +315,93 @@ class ImapReadOnlyClient:
     def _require_selected(self) -> None:
         if self._selected_folder is None:
             raise ImapClientError("no IMAP folder is selected", ErrorCode.INTERNAL_ERROR)
+
+    def _message_count(self, raw_name: str) -> int:
+        status, data = self._call(
+            "status", self._mailbox_argument(raw_name), "(MESSAGES)"
+        )
+        if status != "OK":
+            raise ImapClientError("IMAP folder status failed", ErrorCode.INTERNAL_ERROR)
+        for item in data:
+            if not isinstance(item, bytes):
+                continue
+            try:
+                rendered = item.decode("ascii", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise ImapClientError(
+                    "IMAP folder status is invalid", ErrorCode.INTERNAL_ERROR
+                ) from exc
+            match = _STATUS_MESSAGES.search(rendered)
+            if match is not None:
+                return int(match.group(1))
+        raise ImapClientError("IMAP folder status is invalid", ErrorCode.INTERNAL_ERROR)
+
+    @staticmethod
+    def _parse_list_response(item: bytes) -> tuple[tuple[str, ...], str]:
+        try:
+            rendered = item.decode("ascii", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ImapClientError(
+                "IMAP folder list is invalid", ErrorCode.INTERNAL_ERROR
+            ) from exc
+        match = _LIST_RESPONSE.fullmatch(rendered)
+        if match is None:
+            raise ImapClientError("IMAP folder list is invalid", ErrorCode.INTERNAL_ERROR)
+        raw_name = match.group("name")
+        if raw_name.startswith('"'):
+            if not raw_name.endswith('"'):
+                raise ImapClientError(
+                    "IMAP folder list is invalid", ErrorCode.INTERNAL_ERROR
+                )
+            raw_name = ImapReadOnlyClient._unquote(raw_name)
+        elif any(character.isspace() for character in raw_name):
+            raise ImapClientError("IMAP folder list is invalid", ErrorCode.INTERNAL_ERROR)
+        if not raw_name:
+            raise ImapClientError("IMAP folder list is invalid", ErrorCode.INTERNAL_ERROR)
+        return tuple(match.group("flags").split()), raw_name
+
+    @staticmethod
+    def _unquote(value: str) -> str:
+        result: list[str] = []
+        escaped = False
+        for character in value[1:-1]:
+            if escaped:
+                if character not in {'"', "\\"}:
+                    raise ImapClientError(
+                        "IMAP folder list is invalid", ErrorCode.INTERNAL_ERROR
+                    )
+                result.append(character)
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            else:
+                result.append(character)
+        if escaped:
+            raise ImapClientError("IMAP folder list is invalid", ErrorCode.INTERNAL_ERROR)
+        return "".join(result)
+
+    @staticmethod
+    def _folder_role(name: str, flags: set[str]) -> str:
+        if name.upper() == "INBOX":
+            return "inbox"
+        for flag, role in (
+            ("\\DRAFTS", "drafts"),
+            ("\\SENT", "sent"),
+            ("\\JUNK", "junk"),
+            ("\\TRASH", "trash"),
+            ("\\ARCHIVE", "archive"),
+        ):
+            if flag in flags:
+                return role
+        return "other"
+
+    @staticmethod
+    def _mailbox_argument(raw_name: str) -> str:
+        atom_specials = frozenset('(){ %*"\\]')
+        if all(0x20 < ord(char) < 0x7F and char not in atom_specials for char in raw_name):
+            return raw_name
+        escaped = raw_name.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
 
     def _call(self, method_name: str, *args: object) -> tuple[str, list[bytes | None]]:
         connection = self._connection
