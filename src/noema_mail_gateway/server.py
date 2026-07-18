@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
 from noema_mail_core import (
+    MAX_ATTACHMENT_BASE64_SIZE,
     REQUEST_TYPES,
     ContractValidationError,
     ErrorCode,
@@ -33,7 +34,7 @@ from noema_mail_core.contracts import Request
 from .audit import AuditEvent, AuditLog
 from .paths import RuntimePaths
 
-MAX_LINE_BYTES = 1024 * 1024
+MAX_LINE_BYTES = MAX_ATTACHMENT_BASE64_SIZE + 64 * 1024
 REQUEST_TIMEOUT_SECONDS = 30.0
 ACTOR = "openclaw-skill"
 
@@ -62,6 +63,27 @@ class ToolBackend(Protocol):
 
 
 ToolCall = Callable[[ToolBackend, Request], Mapping[str, Any]]
+
+
+class ToolResult(dict[str, Any]):
+    """JSON result carrying metadata used only by the audit boundary."""
+
+    def __init__(
+        self,
+        values: Mapping[str, Any],
+        *,
+        recipient_count: int = 0,
+        attachment_count: int = 0,
+        result: str = "ok",
+        account_alias: str | None = None,
+        case_reference: str | None = None,
+    ) -> None:
+        super().__init__(values)
+        self.audit_recipient_count = recipient_count
+        self.audit_attachment_count = attachment_count
+        self.audit_result = result
+        self.audit_account_alias = account_alias
+        self.audit_case_reference = case_reference
 
 
 def _backend_method(name: str) -> ToolCall:
@@ -221,7 +243,8 @@ class _GatewayRequestHandler(socketserver.StreamRequestHandler):
             result = self._run_with_timeout(dispatch, request)
             json.dumps(result, ensure_ascii=False, default=_json_default)
             response = {"request_id": request_id, "ok": True, "result": result}
-            self._audit(tool, request, result, "ok", None)
+            audit_outcome = getattr(result, "audit_result", "ok")
+            self._audit(tool, request, result, audit_outcome, None)
         except ContractValidationError as exc:
             response = self._error_response(request_id, exc.error_code, exc.safe_message)
             self._audit(tool, request, None, "error", exc.error_code)
@@ -281,7 +304,7 @@ class _GatewayRequestHandler(socketserver.StreamRequestHandler):
             raise value  # type: ignore[misc]
         if not isinstance(value, Mapping):
             raise TypeError("backend result must be a mapping")
-        return dict(value)
+        return value
 
     @staticmethod
     def _safe_backend_error(exc: BaseException) -> tuple[ErrorCode, str]:
@@ -339,9 +362,13 @@ class _GatewayRequestHandler(socketserver.StreamRequestHandler):
         outcome: str,
         error_code: ErrorCode | None,
     ) -> None:
-        account_alias = _request_value(request, "account_alias")
+        account_alias = getattr(result, "audit_account_alias", None)
+        if account_alias is None:
+            account_alias = _request_value(request, "account_alias")
         draft_id = _result_or_request_value(result, request, "draft_id")
-        case_reference = _request_value(request, "case_reference")
+        case_reference = getattr(result, "audit_case_reference", None)
+        if case_reference is None:
+            case_reference = _request_value(request, "case_reference")
         revision = _result_or_request_value(result, request, "revision")
         content_hash = _mapping_text(result, "content_hash")
         self.server.audit_log.record(
@@ -353,8 +380,8 @@ class _GatewayRequestHandler(socketserver.StreamRequestHandler):
                 case_reference=(
                     case_reference if isinstance(case_reference, str) else None
                 ),
-                recipient_count=_recipient_count(request),
-                attachment_count=_attachment_count(request),
+                recipient_count=_recipient_count(request, result),
+                attachment_count=_attachment_count(request, result),
                 content_hash=content_hash,
                 revision=revision if isinstance(revision, int) else None,
                 result=outcome,
@@ -381,7 +408,12 @@ def _mapping_text(result: Mapping[str, Any] | None, name: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _recipient_count(request: Request | None) -> int:
+def _recipient_count(
+    request: Request | None, result: Mapping[str, Any] | None = None
+) -> int:
+    audit_count = getattr(result, "audit_recipient_count", None)
+    if isinstance(audit_count, int) and not isinstance(audit_count, bool):
+        return max(0, audit_count)
     if request is None:
         return 0
     return sum(
@@ -391,7 +423,12 @@ def _recipient_count(request: Request | None) -> int:
     )
 
 
-def _attachment_count(request: Request | None) -> int:
+def _attachment_count(
+    request: Request | None, result: Mapping[str, Any] | None = None
+) -> int:
+    audit_count = getattr(result, "audit_attachment_count", None)
+    if isinstance(audit_count, int) and not isinstance(audit_count, bool):
+        return max(0, audit_count)
     value = _request_value(request, "attachment_ids")
     return len(value) if isinstance(value, tuple) else 0
 

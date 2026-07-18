@@ -4,7 +4,10 @@ Sicherer, lokaler Maildienst für NOEMA/Lumi. Das Gateway soll GMX über IMAP an
 
 ## Status
 
-Planungs- und Gerüstphase. Keine produktive GMX-Verbindung, kein SMTP-Versand und keine Thunderbird-Automation.
+Der lokale Mock-Umfang einschließlich Unix-Socket, IMAP-Leseweg,
+Entwurfssynchronisation, Staging und Audit ist vollständig integriert. Es gibt
+weiterhin keine produktive GMX-Verbindung, keinen SMTP-Versand und keine
+Thunderbird-Automation; der VM02-Rollout bleibt M9 vorbehalten.
 
 ## Zielbild
 

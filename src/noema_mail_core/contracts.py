@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
@@ -11,6 +13,8 @@ from uuid import UUID
 from .exceptions import ValidationError
 from .models import MAX_BODY_TEXT_SIZE, EmailAddress
 from .status import DraftStatus
+
+MAX_ATTACHMENT_BASE64_SIZE = 20 * 1024 * 1024
 
 FORBIDDEN_FIELDS = frozenset(
     {"password", "attachment_path", "shell_command", "send_immediately"}
@@ -236,19 +240,29 @@ class MailUpdateDraftRequest:
 @dataclass(frozen=True, slots=True)
 class MailAddAttachmentRequest:
     idempotency_key: str
-    draft_id: str
-    revision: int
-    attachment_ids: tuple[str, ...]
+    content_base64: str
+    display_name: str
+    mime_type: str
 
     def __post_init__(self) -> None:
         _validate_uuid(self.idempotency_key, "idempotency_key")
-        _validate_uuid(self.draft_id, "draft_id")
-        _validate_revision(self.revision)
-        object.__setattr__(
-            self,
-            "attachment_ids",
-            _string_tuple(self.attachment_ids, "attachment_ids", allow_empty=False),
-        )
+        if not isinstance(self.content_base64, str):
+            raise _invalid("content_base64 must be a string")
+        if not self.content_base64:
+            raise _invalid("content_base64 must not be empty")
+        if len(self.content_base64) > MAX_ATTACHMENT_BASE64_SIZE:
+            raise ContractValidationError(
+                "content_base64 must not exceed 20 MiB", ErrorCode.TOO_LARGE
+            )
+        if "\r" in self.content_base64 or "\n" in self.content_base64:
+            raise _invalid("content_base64 must not contain line breaks")
+        try:
+            encoded = self.content_base64.encode("ascii", errors="strict")
+            base64.b64decode(encoded, validate=True)
+        except (UnicodeEncodeError, binascii.Error, ValueError) as error:
+            raise _invalid("content_base64 must be valid base64") from error
+        _required_text(self.display_name, "display_name", max_length=255)
+        _required_text(self.mime_type, "mime_type", max_length=255)
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +294,7 @@ class MailCreateDraftResponse:
     revision: int
     status: DraftStatus
     content_hash: str
+    outcome: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,14 +303,17 @@ class MailUpdateDraftResponse:
     revision: int
     status: DraftStatus
     content_hash: str
+    outcome: str
 
 
 @dataclass(frozen=True, slots=True)
 class MailAddAttachmentResponse:
-    draft_id: str
-    revision: int
-    status: DraftStatus
-    content_hash: str
+    attachment_id: str
+    sha256: str
+    display_name: str
+    mime_type: str
+    size: int
+    staging_reference: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,11 +322,12 @@ class MailGetDraftSummaryResponse:
     revision: int
     status: DraftStatus
     content_hash: str
-    to: tuple[str, ...]
-    cc: tuple[str, ...]
-    bcc: tuple[str, ...]
+    to_count: int
+    cc_count: int
+    bcc_count: int
     subject: str
-    attachment_ids: tuple[str, ...]
+    body_excerpt: str
+    attachments: tuple[Mapping[str, Any], ...]
 
 
 type Request = (

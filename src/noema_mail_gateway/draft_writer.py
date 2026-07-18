@@ -50,6 +50,14 @@ class SyncOutcome(StrEnum):
     CONFLICT_DUPLICATE = "conflict_duplicate"
 
 
+class InspectionOutcome(StrEnum):
+    """Result of comparing a stored binding with the current server draft."""
+
+    IN_SYNC = "in_sync"
+    CONFLICT_MODIFIED = "conflict_modified"
+    CONFLICT_DUPLICATE = "conflict_duplicate"
+
+
 @dataclass(frozen=True, slots=True)
 class SyncResult:
     """Identity and binding metadata observed after synchronisation."""
@@ -63,10 +71,37 @@ class SyncResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DraftSnapshot:
+    """Draft content read back from the server without persisting it locally."""
+
+    uid: str
+    revision: int
+    content_hash: str
+    to: tuple[str, ...]
+    cc: tuple[str, ...]
+    bcc: tuple[str, ...]
+    subject: str
+    body_text: str
+    body_html: str | None
+    attachment_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DraftInspection:
+    """Server reconciliation outcome and an optional singular snapshot."""
+
+    draft_id: str
+    uidvalidity: int
+    outcome: InspectionOutcome
+    snapshot: DraftSnapshot | None
+
+
+@dataclass(frozen=True, slots=True)
 class _ServerDraft:
     uid: str
     revision: int | None
     content_hash: str
+    raw_message: bytes
 
 
 class _UnavailableAttachmentSource:
@@ -270,6 +305,33 @@ class DraftWriter:
             SyncOutcome.UPDATED,
         )
 
+    def inspect_draft(self, draft_id: str, expected_hash: str) -> DraftInspection:
+        """Compare the uniquely identified server draft with a stored hash."""
+
+        if not isinstance(draft_id, str) or not draft_id:
+            raise ValueError("draft_id must be a non-empty string")
+        if not isinstance(expected_hash, str) or _HASH_RE.fullmatch(expected_hash) is None:
+            raise ValueError("expected_hash must contain 64 lowercase hexadecimal characters")
+        uidvalidity = self._select_drafts()
+        matches = self._find_drafts(draft_id)
+        if not matches:
+            raise ImapClientError("server draft was not found", ErrorCode.NOT_FOUND)
+        if len(matches) > 1:
+            return DraftInspection(
+                draft_id,
+                uidvalidity,
+                InspectionOutcome.CONFLICT_DUPLICATE,
+                None,
+            )
+        server_draft = matches[0]
+        snapshot = self._snapshot(server_draft)
+        outcome = (
+            InspectionOutcome.IN_SYNC
+            if server_draft.content_hash == expected_hash
+            else InspectionOutcome.CONFLICT_MODIFIED
+        )
+        return DraftInspection(draft_id, uidvalidity, outcome, snapshot)
+
     @staticmethod
     def _require_draft(draft: Draft) -> None:
         if not isinstance(draft, Draft):
@@ -316,7 +378,14 @@ class DraftWriter:
             if parsed.get("X-Noema-Draft-Id") != draft_id:
                 continue
             revision = self._parse_revision(parsed.get("X-Noema-Revision"))
-            found.append(_ServerDraft(uid, revision, self._server_hash(parsed, raw_message)))
+            found.append(
+                _ServerDraft(
+                    uid,
+                    revision,
+                    self._server_hash(parsed, raw_message),
+                    raw_message,
+                )
+            )
         return found
 
     def _message_bytes(self, draft: Draft, draft_hash: str) -> bytes:
@@ -336,9 +405,6 @@ class DraftWriter:
         message.set_content(draft.body_text)
         if draft.body_html is not None:
             message.add_alternative(draft.body_html, subtype="html")
-        for part in message.walk():
-            if part.get_content_type() in {"text/plain", "text/html"}:
-                part["X-Noema-Part-Sha256"] = self._text_part_hash(part)
 
         for attachment in draft.attachments:
             payload = self._read_attachment(attachment)
@@ -354,7 +420,21 @@ class DraftWriter:
                 filename=attachment.display_name,
             )
             part = message.get_payload()[-1]
+            part["X-Noema-Attachment-Id"] = attachment.attachment_id
             part["X-Noema-Attachment-Sha256"] = attachment.sha256.lower()
+            part["X-Noema-Staging-Reference"] = attachment.staging_reference
+
+        # Erst nach add_attachment stempeln: vorher wandelt add_attachment die
+        # Nachricht in multipart um und die Part-Header blieben am Umschlag hängen.
+        for part in message.walk():
+            if part.get_content_type() in {"text/plain", "text/html"}:
+                if part.get_content_disposition() == "attachment":
+                    continue
+                original = draft.body_text
+                if part.get_content_type() == "text/html":
+                    original = draft.body_html or ""
+                part["X-Noema-Original-Length"] = str(len(original.encode("utf-8")))
+                part["X-Noema-Part-Sha256"] = self._text_part_hash(part)
         return message.as_bytes(policy=_WIRE_POLICY)
 
     def _read_attachment(self, attachment: AttachmentRef) -> bytes:
@@ -474,7 +554,60 @@ class DraftWriter:
         if not isinstance(payload, bytes):
             return ""
         normalized = payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-        return hashlib.sha256(normalized).hexdigest()
+        original_length = str(part.get("X-Noema-Original-Length", ""))
+        return hashlib.sha256(original_length.encode() + b"\0" + normalized).hexdigest()
+
+    @classmethod
+    def _snapshot(cls, server_draft: _ServerDraft) -> DraftSnapshot:
+        message = BytesParser(policy=policy.default).parsebytes(server_draft.raw_message)
+        if server_draft.revision is None:
+            raise ImapClientError("server draft revision is invalid", ErrorCode.CONFLICT)
+
+        bodies: dict[str, str] = {}
+        attachment_ids: list[str] = []
+        for part in message.walk():
+            if part.get_content_disposition() == "attachment":
+                attachment_id = part.get("X-Noema-Attachment-Id")
+                if isinstance(attachment_id, str) and attachment_id:
+                    attachment_ids.append(attachment_id)
+                continue
+            mime_type = part.get_content_type()
+            if mime_type not in {"text/plain", "text/html"}:
+                continue
+            payload = part.get_payload(decode=True)
+            if not isinstance(payload, bytes):
+                payload = b""
+            declared_length = part.get("X-Noema-Original-Length")
+            if isinstance(declared_length, str) and declared_length.isdecimal():
+                payload = payload[: int(declared_length)]
+            charset = part.get_content_charset() or "utf-8"
+            try:
+                text = payload.decode(charset, errors="replace")
+            except LookupError:
+                text = payload.decode("utf-8", errors="replace")
+            if declared_length is None:
+                text = text.removesuffix("\n")
+            bodies.setdefault(mime_type, text)
+
+        def addresses(field_name: str) -> tuple[str, ...]:
+            return tuple(
+                address
+                for _, address in getaddresses(message.get_all(field_name, []))
+                if address
+            )
+
+        return DraftSnapshot(
+            uid=server_draft.uid,
+            revision=server_draft.revision,
+            content_hash=server_draft.content_hash,
+            to=addresses("To"),
+            cc=addresses("Cc"),
+            bcc=addresses("Bcc"),
+            subject=str(message.get("Subject", "")),
+            body_text=bodies.get("text/plain", ""),
+            body_html=bodies.get("text/html"),
+            attachment_ids=tuple(attachment_ids),
+        )
 
     @staticmethod
     def _duplicate_result(

@@ -35,9 +35,9 @@ GOOD_REQUESTS: dict[str, dict[str, object]] = {
     },
     "mail_add_attachment": {
         "idempotency_key": IDEMPOTENCY_KEY,
-        "draft_id": DRAFT_ID,
-        "revision": 1,
-        "attachment_ids": ["attachment-1"],
+        "content_base64": "c2FmZSB0ZXh0",
+        "display_name": "attachment.txt",
+        "mime_type": "text/plain",
     },
     "mail_get_draft_summary": {"draft_id": DRAFT_ID},
 }
@@ -93,6 +93,11 @@ def test_writing_tools_require_an_idempotency_key(tool_name: str) -> None:
             {"body_text": "ü" * (128 * 1024 + 1)},
             ErrorCode.TOO_LARGE,
         ),
+        (
+            "mail_add_attachment",
+            {"content_base64": "A" * (20 * 1024 * 1024 + 1)},
+            ErrorCode.TOO_LARGE,
+        ),
     ],
 )
 def test_oversized_or_out_of_range_values_are_rejected(
@@ -111,4 +116,9 @@ def test_unknown_tool_and_invalid_uuid_are_rejected() -> None:
         validate_request(
             "mail_add_attachment",
             GOOD_REQUESTS["mail_add_attachment"] | {"idempotency_key": str(uuid4())[:-1]},
+        )
+    with pytest.raises(ContractValidationError):
+        validate_request(
+            "mail_add_attachment",
+            GOOD_REQUESTS["mail_add_attachment"] | {"content_base64": "not base64"},
         )

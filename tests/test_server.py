@@ -41,9 +41,9 @@ GOOD_REQUESTS: dict[str, dict[str, object]] = {
     },
     "mail_add_attachment": {
         "idempotency_key": IDEMPOTENCY_KEY,
-        "draft_id": DRAFT_ID,
-        "revision": 1,
-        "attachment_ids": ["attachment-1"],
+        "content_base64": "c2FmZSB0ZXh0",
+        "display_name": "attachment.txt",
+        "mime_type": "text/plain",
     },
     "mail_get_draft_summary": {"draft_id": DRAFT_ID},
 }
