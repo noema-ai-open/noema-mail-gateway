@@ -19,6 +19,7 @@ from typing import BinaryIO, Protocol, cast
 from noema_mail_core import AttachmentRef, Draft, ErrorCode, SecretValue, content_hash
 
 from .imap_client import ImapClientError, ImapConfig
+from .imap_folders import encode_folder
 
 type ImapConnection = imaplib.IMAP4
 type ImapFactory = Callable[[str, int, float], ImapConnection]
@@ -128,7 +129,7 @@ class DraftWriter:
             raise ValueError("drafts_folder must be a non-empty string")
         self._factory = factory
         self._attachment_source = attachment_source or _UnavailableAttachmentSource()
-        self._drafts_folder = drafts_folder
+        self._drafts_folder = encode_folder(drafts_folder)
         self._connection: ImapConnection | None = None
 
     def connect(self, config: ImapConfig, password: SecretValue) -> DraftWriter:
@@ -367,8 +368,22 @@ class DraftWriter:
         raw_uids = data[0] if data else b""
         if not isinstance(raw_uids, bytes):
             return []
+        uid_tokens = raw_uids.split()
+        if not uid_tokens:
+            # GMX indiziert eigene X-Header nicht: SEARCH HEADER liefert dort
+            # immer eine leere Treffermenge. Alle UIDs holen; der Filter auf
+            # X-Noema-Draft-Id unten stellt die Identität sicher.
+            response, data = self._uid("SEARCH", None, "ALL")
+            if response != "OK":
+                raise ImapClientError(
+                    "draft identity search failed", ErrorCode.INTERNAL_ERROR
+                )
+            raw_uids = data[0] if data else b""
+            if not isinstance(raw_uids, bytes):
+                return []
+            uid_tokens = raw_uids.split()
         found: list[_ServerDraft] = []
-        for raw_uid in raw_uids.split():
+        for raw_uid in uid_tokens:
             uid = raw_uid.decode("ascii", errors="strict")
             fetch_response, payload = self._uid("FETCH", uid, "(BODY.PEEK[])")
             raw_message = self._extract_payload(payload)
