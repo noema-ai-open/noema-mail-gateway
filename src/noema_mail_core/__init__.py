@@ -27,6 +27,7 @@ from .exceptions import (
     InvalidTransitionError,
     MailCoreError,
     RuntimeSecurityError,
+    StagingSecurityError,
     ValidationError,
 )
 from .hashing import content_hash
@@ -77,6 +78,7 @@ __all__ = [
     "MailUpdateDraftResponse",
     "RuntimeSecurityError",
     "SecretValue",
+    "StagingSecurityError",
     "UntrustedText",
     "ValidationError",
     "content_hash",

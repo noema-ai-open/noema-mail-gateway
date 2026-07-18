@@ -14,9 +14,9 @@ from email.parser import BytesParser
 from email.utils import format_datetime, getaddresses
 from enum import StrEnum
 from types import TracebackType
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, Protocol, cast
 
-from noema_mail_core import Draft, ErrorCode, SecretValue, content_hash
+from noema_mail_core import AttachmentRef, Draft, ErrorCode, SecretValue, content_hash
 
 from .imap_client import ImapClientError, ImapConfig
 
@@ -29,6 +29,13 @@ _WIRE_POLICY = policy.default.clone(linesep="\r\n")
 
 class AttachmentSource(Protocol):
     """Byte source for an attachment that was validated during staging."""
+
+    def open_for_draft(self, ref: AttachmentRef) -> bytes:
+        """Read *ref* only after re-verifying its staging binding."""
+
+
+class _LegacyAttachmentSource(Protocol):
+    """Compatibility boundary for M4 byte sources used before real staging."""
 
     def open(self, staging_reference: str) -> BinaryIO:
         """Open *staging_reference* for binary reading."""
@@ -63,8 +70,8 @@ class _ServerDraft:
 
 
 class _UnavailableAttachmentSource:
-    def open(self, staging_reference: str) -> BinaryIO:
-        del staging_reference
+    def open_for_draft(self, ref: AttachmentRef) -> bytes:
+        del ref
         raise ImapClientError("attachment source is unavailable", ErrorCode.NOT_FOUND)
 
 
@@ -74,7 +81,7 @@ class DraftWriter:
     def __init__(
         self,
         factory: ImapFactory | None = None,
-        attachment_source: AttachmentSource | None = None,
+        attachment_source: AttachmentSource | _LegacyAttachmentSource | None = None,
         drafts_folder: str = "Drafts",
     ) -> None:
         if (
@@ -334,8 +341,7 @@ class DraftWriter:
                 part["X-Noema-Part-Sha256"] = self._text_part_hash(part)
 
         for attachment in draft.attachments:
-            with self._attachment_source.open(attachment.staging_reference) as source:
-                payload = source.read()
+            payload = self._read_attachment(attachment)
             if not isinstance(payload, bytes):
                 raise ImapClientError(
                     "attachment source did not return bytes", ErrorCode.INTERNAL_ERROR
@@ -350,6 +356,16 @@ class DraftWriter:
             part = message.get_payload()[-1]
             part["X-Noema-Attachment-Sha256"] = attachment.sha256.lower()
         return message.as_bytes(policy=_WIRE_POLICY)
+
+    def _read_attachment(self, attachment: AttachmentRef) -> bytes:
+        source = self._attachment_source
+        secure_reader = getattr(source, "open_for_draft", None)
+        if callable(secure_reader):
+            return secure_reader(attachment)
+
+        legacy_source = cast(_LegacyAttachmentSource, source)
+        with legacy_source.open(attachment.staging_reference) as opened:
+            return opened.read()
 
     def _append(self, raw_message: bytes, draft: Draft) -> None:
         response, _ = self._call(
