@@ -1,10 +1,12 @@
-"""Small local IMAP server used by the read-only adapter tests."""
+"""Small local IMAP server used by the adapter tests."""
 
 from __future__ import annotations
 
 import socketserver
 import threading
 from dataclasses import dataclass, field
+from email import policy
+from email.parser import BytesParser
 
 
 @dataclass(slots=True)
@@ -15,7 +17,58 @@ class MockImapState:
     auth_error: bool = False
     timeout_on: str | None = None
     disconnect_during_fetch: bool = False
+    disconnect_during_append: bool = False
+    uidvalidity_change_on_append: bool = False
+    uidvalidity: int = 1
+    drafts_folder: str = "Drafts"
+    flags: dict[str, set[str]] = field(default_factory=dict)
     commands: list[str] = field(default_factory=list)
+    _next_uid: int = field(init=False, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        numeric = [int(uid) for uid in self.messages if uid.isdecimal()]
+        self._next_uid = max(numeric, default=0) + 1
+        for uid in self.messages:
+            self.flags.setdefault(uid, set())
+
+    def append_external(self, message: bytes, flags: set[str] | None = None) -> str:
+        """Add a server message as if another mail client had created it."""
+
+        with self._lock:
+            uid = str(self._next_uid)
+            self._next_uid += 1
+            self.messages[uid] = message
+            self.flags[uid] = set(flags or {"\\Draft"})
+            return uid
+
+    def replace_external(self, uid: str, message: bytes) -> str:
+        """Model a client replacing a draft with a newly assigned UID."""
+
+        with self._lock:
+            previous_flags = self.flags.pop(uid, {"\\Draft"})
+            self.messages.pop(uid, None)
+            new_uid = str(self._next_uid)
+            self._next_uid += 1
+            self.messages[new_uid] = message
+            self.flags[new_uid] = set(previous_flags)
+            return new_uid
+
+    def change_uidvalidity(self, value: int | None = None) -> None:
+        """Invalidate all tracked UIDs and renumber current messages."""
+
+        with self._lock:
+            self.uidvalidity = value if value is not None else self.uidvalidity + 1
+            old_messages = list(self.messages.values())
+            old_flags = list(self.flags.values())
+            self.messages.clear()
+            self.flags.clear()
+            self._next_uid = 101
+            for message, flags in zip(old_messages, old_flags, strict=True):
+                uid = str(self._next_uid)
+                self._next_uid += 1
+                self.messages[uid] = message
+                self.flags[uid] = set(flags)
 
 
 class _Server(socketserver.ThreadingTCPServer):
@@ -51,16 +104,26 @@ class _Handler(socketserver.StreamRequestHandler):
                 self._ok(tag, "CAPABILITY")
             elif command == "LOGIN":
                 self._login(tag, arguments)
-            elif command == "EXAMINE":
+            elif command in {"EXAMINE", "SELECT"}:
                 self._send(f"* {len(self.server.state.messages)} EXISTS\r\n".encode())
-                self._ok(tag, "EXAMINE")
+                self._send(
+                    f"* OK [UIDVALIDITY {self.server.state.uidvalidity}] UIDs valid\r\n".encode()
+                )
+                self._ok(tag, command)
             elif command == "UID" and effective == "SEARCH":
-                uids = " ".join(self.server.state.messages)
+                uids = " ".join(self._search(arguments))
                 self._send(f"* SEARCH {uids}\r\n".encode())
                 self._ok(tag, "SEARCH")
             elif command == "UID" and effective == "FETCH":
                 uid, _, fetch_expression = arguments.partition(" ")
                 self._fetch(tag, uid, fetch_expression)
+            elif command == "UID" and effective == "STORE":
+                uid, _, store_expression = arguments.partition(" ")
+                self._store(tag, uid, store_expression)
+            elif command == "APPEND":
+                self._append(tag, arguments)
+            elif command == "EXPUNGE":
+                self._expunge(tag)
             elif command == "LOGOUT":
                 self._send(b"* BYE closing local mock\r\n")
                 self._ok(tag, "LOGOUT")
@@ -91,6 +154,72 @@ class _Handler(socketserver.StreamRequestHandler):
             return
         self._send(raw_message + b")\r\n")
         self._ok(tag, "FETCH")
+
+    def _search(self, arguments: str) -> list[str]:
+        state = self.server.state
+        if "HEADER" not in arguments.upper():
+            return list(state.messages)
+        _, _, after_header = arguments.partition("HEADER")
+        header_name, _, expected = after_header.strip().partition(" ")
+        expected = expected.strip().strip('"')
+        matches: list[str] = []
+        for uid, raw_message in state.messages.items():
+            message = BytesParser(policy=policy.default).parsebytes(raw_message)
+            if message.get(header_name) == expected:
+                matches.append(uid)
+        return matches
+
+    def _store(self, tag: str, uid: str, expression: str) -> None:
+        state = self.server.state
+        if uid not in state.messages:
+            self._send(f"{tag} NO message not found\r\n".encode())
+            return
+        if "+FLAGS" not in expression.upper() or "\\DELETED" not in expression.upper():
+            self._send(f"{tag} BAD unsupported flags\r\n".encode())
+            return
+        state.flags.setdefault(uid, set()).add("\\Deleted")
+        self._send(f"* {uid} FETCH (UID {uid} FLAGS (\\Deleted))\r\n".encode())
+        self._ok(tag, "STORE")
+
+    def _append(self, tag: str, arguments: str) -> None:
+        marker_start = arguments.rfind("{")
+        marker_end = arguments.rfind("}")
+        if marker_start < 0 or marker_end < marker_start:
+            self._send(f"{tag} BAD missing literal\r\n".encode())
+            return
+        try:
+            literal_size = int(arguments[marker_start + 1 : marker_end])
+        except ValueError:
+            self._send(f"{tag} BAD invalid literal\r\n".encode())
+            return
+        self._send(b"+ literal accepted\r\n")
+        raw_message = self.rfile.read(literal_size)
+        self.rfile.read(2)
+        state = self.server.state
+        if state.disconnect_during_append:
+            self.request.shutdown(2)
+            return
+        uid = state.append_external(raw_message, {"\\Draft"})
+        if state.uidvalidity_change_on_append:
+            state.uidvalidity_change_on_append = False
+            state.change_uidvalidity()
+            uid = next(
+                candidate
+                for candidate, message in state.messages.items()
+                if message == raw_message
+            )
+        self._send(
+            f"{tag} OK [APPENDUID {state.uidvalidity} {uid}] APPEND completed\r\n".encode()
+        )
+
+    def _expunge(self, tag: str) -> None:
+        state = self.server.state
+        deleted = [uid for uid, flags in state.flags.items() if "\\Deleted" in flags]
+        for sequence, uid in enumerate(deleted, start=1):
+            state.messages.pop(uid, None)
+            state.flags.pop(uid, None)
+            self._send(f"* {sequence} EXPUNGE\r\n".encode())
+        self._ok(tag, "EXPUNGE")
 
     def _ok(self, tag: str, operation: str) -> None:
         self._send(f"{tag} OK {operation} completed\r\n".encode())
