@@ -1,0 +1,23 @@
+# Build & Cache
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+venv*/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets & lokale Konfiguration — niemals committen
+.env
+.env.*
+*.credential
+credentials/
+*.sqlite3
+*.db
+
+# Lokale Daten
+staging/
+audit/
+logs/
