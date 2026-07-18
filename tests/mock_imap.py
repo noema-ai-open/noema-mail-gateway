@@ -21,6 +21,7 @@ class MockImapState:
     uidvalidity_change_on_append: bool = False
     uidvalidity: int = 1
     drafts_folder: str = "Drafts"
+    header_search_unsupported: bool = False
     flags: dict[str, set[str]] = field(default_factory=dict)
     commands: list[str] = field(default_factory=list)
     _next_uid: int = field(init=False, repr=False)
@@ -159,6 +160,8 @@ class _Handler(socketserver.StreamRequestHandler):
         state = self.server.state
         if "HEADER" not in arguments.upper():
             return list(state.messages)
+        if state.header_search_unsupported:
+            return []
         _, _, after_header = arguments.partition("HEADER")
         header_name, _, expected = after_header.strip().partition(" ")
         expected = expected.strip().strip('"')

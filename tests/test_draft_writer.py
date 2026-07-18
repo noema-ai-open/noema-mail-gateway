@@ -222,3 +222,35 @@ def test_writer_source_has_no_delivery_transport_and_only_bound_folder_mutations
     assert "ImapReadOnlyClient" not in source
     assert 'self._call("append",' not in source
     assert 'self._call("select",' in source
+
+
+@requires_loopback
+def test_gmx_like_server_without_header_search_still_creates_and_updates() -> None:
+    state = MockImapState(
+        {}, credential=CREDENTIAL_CANARY, header_search_unsupported=True
+    )
+    first = make_draft()
+    with MockImapServer(state) as server:
+        writer = DraftWriter(
+            plain_factory,
+            FakeAttachmentSource(),
+            drafts_folder="Entwürfe",
+        ).connect(
+            ImapConfig("127.0.0.1", server.port, "reader@example.test", 1.0),
+            SecretValue(CREDENTIAL_CANARY),
+        )
+        with writer:
+            created = writer.create_draft(first)
+            second = replace(
+                first,
+                revision=2,
+                subject="Updated draft",
+                updated_at=datetime(2026, 7, 18, 12, 1, tzinfo=UTC),
+            )
+            second = replace(second, content_hash=content_hash(second))
+            updated = writer.update_draft(second, created.content_hash)
+
+    assert created.outcome is SyncOutcome.CREATED
+    assert updated.outcome is SyncOutcome.UPDATED
+    assert any("SELECT Entw&APw-rfe" in command for command in state.commands)
+    assert any("APPEND Entw&APw-rfe" in command for command in state.commands)
