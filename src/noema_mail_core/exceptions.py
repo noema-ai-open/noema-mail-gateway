@@ -27,5 +27,9 @@ class RuntimeSecurityError(MailCoreError):
     """Raised when a runtime path violates filesystem security requirements."""
 
 
+class StagingSecurityError(MailCoreError):
+    """Raised when a staged attachment violates its filesystem binding."""
+
+
 class CredentialError(MailCoreError):
     """Raised when a required service credential cannot be loaded safely."""
