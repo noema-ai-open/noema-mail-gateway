@@ -25,6 +25,12 @@ GOOD_REQUESTS: dict[str, dict[str, object]] = {
     "mail_search": {"query": "from:sender@example.org", "limit": 10},
     "mail_read": {"message_id": "message-1"},
     "mail_get_thread": {"thread_id": "thread-1"},
+    "mail_list_folders": {},
+    "mail_move": {
+        "message_id": "message-1",
+        "source_folder": "INBOX",
+        "target_folder": "Archiv",
+    },
     "mail_create_draft": {
         "idempotency_key": IDEMPOTENCY_KEY,
         "account_alias": "gmx-primary",

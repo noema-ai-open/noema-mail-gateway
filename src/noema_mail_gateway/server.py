@@ -23,6 +23,8 @@ from noema_mail_core import (
     MailCreateDraftRequest,
     MailGetDraftSummaryRequest,
     MailGetThreadRequest,
+    MailListFoldersRequest,
+    MailMoveRequest,
     MailReadRequest,
     MailSearchRequest,
     MailUpdateDraftRequest,
@@ -48,6 +50,12 @@ class ToolBackend(Protocol):
     def mail_read(self, request: MailReadRequest) -> Mapping[str, Any]: ...
 
     def mail_get_thread(self, request: MailGetThreadRequest) -> Mapping[str, Any]: ...
+
+    def mail_list_folders(
+        self, request: MailListFoldersRequest
+    ) -> Mapping[str, Any]: ...
+
+    def mail_move(self, request: MailMoveRequest) -> Mapping[str, Any]: ...
 
     def mail_create_draft(self, request: MailCreateDraftRequest) -> Mapping[str, Any]: ...
 
@@ -131,6 +139,14 @@ class MockBackend:
 
     def mail_get_thread(self, request: MailGetThreadRequest) -> Mapping[str, Any]:
         return self._call("mail_get_thread", request)
+
+    def mail_list_folders(
+        self, request: MailListFoldersRequest
+    ) -> Mapping[str, Any]:
+        return self._call("mail_list_folders", request)
+
+    def mail_move(self, request: MailMoveRequest) -> Mapping[str, Any]:
+        return self._call("mail_move", request)
 
     def mail_create_draft(self, request: MailCreateDraftRequest) -> Mapping[str, Any]:
         return self._call("mail_create_draft", request)

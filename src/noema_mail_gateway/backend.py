@@ -1,4 +1,4 @@
-"""Real wiring of the seven gateway tools to IMAP, staging, and stores."""
+"""Real wiring of the gateway tools to IMAP, staging, and stores."""
 
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ from noema_mail_core import (
     MailCreateDraftRequest,
     MailGetDraftSummaryRequest,
     MailGetThreadRequest,
+    MailListFoldersRequest,
+    MailMoveRequest,
     MailReadRequest,
     MailSearchRequest,
     MailUpdateDraftRequest,
@@ -39,6 +41,8 @@ from .draft_writer import (
     SyncOutcome,
 )
 from .imap_client import ImapConfig, ImapReadOnlyClient
+from .imap_folders import encode_folder
+from .mail_mover import MailMover
 from .mailparse import Message, MessageSummary
 from .server import ToolBackend, ToolResult
 from .staging import AttachmentStaging
@@ -97,7 +101,7 @@ class GatewayBackend(ToolBackend):
 
     def mail_search(self, request: MailSearchRequest) -> Mapping[str, Any]:
         self._require_alias(request.account_alias)
-        with self._reader() as client:
+        with self._reader(request.folder) as client:
             messages = client.search(request.query, request.limit)
         return ToolResult(
             {"messages": [self._summary_data(message) for message in messages]},
@@ -106,7 +110,7 @@ class GatewayBackend(ToolBackend):
 
     def mail_read(self, request: MailReadRequest) -> Mapping[str, Any]:
         self._require_alias(request.account_alias)
-        with self._reader() as client:
+        with self._reader(request.folder) as client:
             message = client.fetch_message(request.message_id)
         return ToolResult(
             {"message": self._message_data(message)},
@@ -116,12 +120,49 @@ class GatewayBackend(ToolBackend):
 
     def mail_get_thread(self, request: MailGetThreadRequest) -> Mapping[str, Any]:
         self._require_alias(request.account_alias)
-        with self._reader() as client:
+        with self._reader(request.folder) as client:
             seed = client.fetch_message(request.thread_id)
             messages = client.fetch_thread(seed)
         return ToolResult(
             {"messages": [self._message_data(message) for message in messages]},
             attachment_count=sum(len(message.attachment_meta) for message in messages),
+            account_alias=self._account_alias,
+        )
+
+    def mail_list_folders(
+        self, request: MailListFoldersRequest
+    ) -> Mapping[str, Any]:
+        self._require_alias(request.account_alias)
+        with self._connected_reader() as client:
+            folders = client.list_folders()
+        return ToolResult(
+            {
+                "folders": [
+                    {
+                        "name": folder.name,
+                        "role": folder.role,
+                        "message_count": folder.message_count,
+                    }
+                    for folder in folders
+                ]
+            },
+            account_alias=self._account_alias,
+        )
+
+    def mail_move(self, request: MailMoveRequest) -> Mapping[str, Any]:
+        self._require_alias(request.account_alias)
+        source_raw = encode_folder(request.source_folder)
+        target_raw = encode_folder(request.target_folder)
+        with self._write_lock:
+            with self._mover() as mover:
+                mover.move(request.message_id, source_raw, target_raw)
+        return ToolResult(
+            {
+                "message_id": request.message_id,
+                "source_folder": request.source_folder,
+                "target_folder": request.target_folder,
+                "outcome": "moved",
+            },
             account_alias=self._account_alias,
         )
 
@@ -345,11 +386,21 @@ class GatewayBackend(ToolBackend):
                 case_reference=record.case_reference,
             )
 
-    def _reader(self) -> ImapReadOnlyClient:
+    def _connected_reader(self) -> ImapReadOnlyClient:
         client = ImapReadOnlyClient(self._imap_factory)
-        connected = client.connect(self._config, self._credential.app_password)
-        connected.select_readonly(self._inbox_folder)
+        return client.connect(self._config, self._credential.app_password)
+
+    def _reader(self, folder: str | None) -> ImapReadOnlyClient:
+        connected = self._connected_reader()
+        try:
+            connected.select_readonly(self._folder_raw(folder))
+        except BaseException:
+            connected.close()
+            raise
         return connected
+
+    def _folder_raw(self, folder: str | None) -> str:
+        return encode_folder(self._inbox_folder if folder is None else folder)
 
     def _writer(self) -> DraftWriter:
         return DraftWriter(
@@ -357,6 +408,11 @@ class GatewayBackend(ToolBackend):
             self._staging,
             drafts_folder=self._drafts_folder,
         ).connect(self._config, self._credential.app_password)
+
+    def _mover(self) -> MailMover:
+        return MailMover(self._imap_factory).connect(
+            self._config, self._credential.app_password
+        )
 
     def _require_alias(self, requested: str | None) -> None:
         if requested is not None and requested != self._account_alias:

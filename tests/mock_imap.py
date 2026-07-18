@@ -13,6 +13,8 @@ from email.parser import BytesParser
 class MockImapState:
     messages: dict[str, bytes]
     credential: str
+    folders: dict[str, dict[str, bytes]] | None = None
+    move_supported: bool = True
     account: str = "reader@example.test"
     auth_error: bool = False
     timeout_on: str | None = None
@@ -28,10 +30,25 @@ class MockImapState:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        numeric = [int(uid) for uid in self.messages if uid.isdecimal()]
+        message_sets = [self.messages]
+        if self.folders is not None:
+            message_sets.extend(self.folders.values())
+        numeric = [
+            int(uid)
+            for messages in message_sets
+            for uid in messages
+            if uid.isdecimal()
+        ]
         self._next_uid = max(numeric, default=0) + 1
-        for uid in self.messages:
-            self.flags.setdefault(uid, set())
+        for messages in message_sets:
+            for uid in messages:
+                self.flags.setdefault(uid, set())
+
+    def next_uid(self) -> str:
+        with self._lock:
+            uid = str(self._next_uid)
+            self._next_uid += 1
+            return uid
 
     def append_external(self, message: bytes, flags: set[str] | None = None) -> str:
         """Add a server message as if another mail client had created it."""
@@ -86,6 +103,7 @@ class _Handler(socketserver.StreamRequestHandler):
     server: _Server
 
     def handle(self) -> None:
+        self._selected_folder: str | None = None
         self.wfile.write(b"* OK local mock ready\r\n")
         self.wfile.flush()
         while line := self.rfile.readline():
@@ -101,16 +119,31 @@ class _Handler(socketserver.StreamRequestHandler):
             if self.server.state.timeout_on == effective:
                 return self.rfile.read(1)
             if command == "CAPABILITY":
-                self._send(b"* CAPABILITY IMAP4rev1\r\n")
+                capabilities = "IMAP4rev1 UIDPLUS"
+                if self.server.state.move_supported:
+                    capabilities += " MOVE"
+                self._send(f"* CAPABILITY {capabilities}\r\n".encode())
                 self._ok(tag, "CAPABILITY")
             elif command == "LOGIN":
                 self._login(tag, arguments)
             elif command in {"EXAMINE", "SELECT"}:
-                self._send(f"* {len(self.server.state.messages)} EXISTS\r\n".encode())
+                folder = _parse_arguments(arguments)[0]
+                if (
+                    self.server.state.folders is not None
+                    and folder not in self.server.state.folders
+                ):
+                    self._send(f"{tag} NO folder not found\r\n".encode())
+                    continue
+                self._selected_folder = folder
+                self._send(f"* {len(self._messages())} EXISTS\r\n".encode())
                 self._send(
                     f"* OK [UIDVALIDITY {self.server.state.uidvalidity}] UIDs valid\r\n".encode()
                 )
                 self._ok(tag, command)
+            elif command == "LIST":
+                self._list(tag, arguments)
+            elif command == "STATUS":
+                self._status(tag, arguments)
             elif command == "UID" and effective == "SEARCH":
                 uids = " ".join(self._search(arguments))
                 self._send(f"* SEARCH {uids}\r\n".encode())
@@ -121,6 +154,11 @@ class _Handler(socketserver.StreamRequestHandler):
             elif command == "UID" and effective == "STORE":
                 uid, _, store_expression = arguments.partition(" ")
                 self._store(tag, uid, store_expression)
+            elif command == "UID" and effective in {"COPY", "MOVE"}:
+                uid, _, target = arguments.partition(" ")
+                self._copy_or_move(tag, effective, uid, target)
+            elif command == "UID" and effective == "EXPUNGE":
+                self._uid_expunge(tag, arguments.strip())
             elif command == "APPEND":
                 self._append(tag, arguments)
             elif command == "EXPUNGE":
@@ -141,7 +179,7 @@ class _Handler(socketserver.StreamRequestHandler):
             self._ok(tag, "LOGIN")
 
     def _fetch(self, tag: str, uid: str, expression: str) -> None:
-        raw_message = self.server.state.messages.get(uid)
+        raw_message = self._messages().get(uid)
         if raw_message is None:
             self._ok(tag, "FETCH")
             return
@@ -158,15 +196,16 @@ class _Handler(socketserver.StreamRequestHandler):
 
     def _search(self, arguments: str) -> list[str]:
         state = self.server.state
+        messages = self._messages()
         if "HEADER" not in arguments.upper():
-            return list(state.messages)
+            return list(messages)
         if state.header_search_unsupported:
             return []
         _, _, after_header = arguments.partition("HEADER")
         header_name, _, expected = after_header.strip().partition(" ")
         expected = expected.strip().strip('"')
         matches: list[str] = []
-        for uid, raw_message in state.messages.items():
+        for uid, raw_message in messages.items():
             message = BytesParser(policy=policy.default).parsebytes(raw_message)
             if message.get(header_name) == expected:
                 matches.append(uid)
@@ -174,7 +213,7 @@ class _Handler(socketserver.StreamRequestHandler):
 
     def _store(self, tag: str, uid: str, expression: str) -> None:
         state = self.server.state
-        if uid not in state.messages:
+        if uid not in self._messages():
             self._send(f"{tag} NO message not found\r\n".encode())
             return
         if "+FLAGS" not in expression.upper() or "\\DELETED" not in expression.upper():
@@ -217,12 +256,94 @@ class _Handler(socketserver.StreamRequestHandler):
 
     def _expunge(self, tag: str) -> None:
         state = self.server.state
+        messages = self._messages()
         deleted = [uid for uid, flags in state.flags.items() if "\\Deleted" in flags]
         for sequence, uid in enumerate(deleted, start=1):
-            state.messages.pop(uid, None)
+            messages.pop(uid, None)
             state.flags.pop(uid, None)
             self._send(f"* {sequence} EXPUNGE\r\n".encode())
         self._ok(tag, "EXPUNGE")
+
+    def _list(self, tag: str, arguments: str) -> None:
+        values = _parse_arguments(arguments)
+        pattern = values[-1] if values else "*"
+        state = self.server.state
+        names = list(state.folders) if state.folders is not None else ["INBOX", state.drafts_folder]
+        if pattern != "*":
+            names = [name for name in names if name == pattern]
+        for name in names:
+            lower_name = name.lower()
+            special_use = ""
+            if lower_name in {"drafts", state.drafts_folder.lower()}:
+                special_use = "\\Drafts "
+            elif lower_name == "sent":
+                special_use = "\\Sent "
+            elif lower_name == "junk":
+                special_use = "\\Junk "
+            elif lower_name == "trash":
+                special_use = "\\Trash "
+            elif lower_name == "archive":
+                special_use = "\\Archive "
+            rendered_name = _quote(name) if " " in name else name
+            self._send(
+                f'* LIST ({special_use}\\HasNoChildren) "/" {rendered_name}\r\n'.encode()
+            )
+        self._ok(tag, "LIST")
+
+    def _status(self, tag: str, arguments: str) -> None:
+        values = _parse_arguments(arguments)
+        folder = values[0] if values else ""
+        state = self.server.state
+        if state.folders is None:
+            messages = state.messages
+        else:
+            messages = state.folders.get(folder)
+            if messages is None:
+                self._send(f"{tag} NO folder not found\r\n".encode())
+                return
+        rendered_name = _quote(folder) if " " in folder else folder
+        self._send(f"* STATUS {rendered_name} (MESSAGES {len(messages)})\r\n".encode())
+        self._ok(tag, "STATUS")
+
+    def _copy_or_move(self, tag: str, operation: str, uid: str, target: str) -> None:
+        state = self.server.state
+        if operation == "MOVE" and not state.move_supported:
+            self._send(f"{tag} BAD MOVE unsupported\r\n".encode())
+            return
+        target_values = _parse_arguments(target)
+        target_name = target_values[0] if target_values else ""
+        if state.folders is None or target_name not in state.folders:
+            self._send(f"{tag} NO target folder not found\r\n".encode())
+            return
+        source = self._messages()
+        raw_message = source.get(uid)
+        if raw_message is None:
+            self._send(f"{tag} NO message not found\r\n".encode())
+            return
+        new_uid = state.next_uid()
+        state.folders[target_name][new_uid] = raw_message
+        state.flags[new_uid] = set(state.flags.get(uid, set())) - {"\\Deleted"}
+        if operation == "MOVE":
+            source.pop(uid, None)
+            state.flags.pop(uid, None)
+        self._ok(tag, operation)
+
+    def _uid_expunge(self, tag: str, uid: str) -> None:
+        state = self.server.state
+        messages = self._messages()
+        if uid in messages and "\\Deleted" in state.flags.get(uid, set()):
+            messages.pop(uid, None)
+            state.flags.pop(uid, None)
+            self._send(b"* 1 EXPUNGE\r\n")
+        self._ok(tag, "EXPUNGE")
+
+    def _messages(self) -> dict[str, bytes]:
+        state = self.server.state
+        if state.folders is None:
+            return state.messages
+        if self._selected_folder is None:
+            return {}
+        return state.folders[self._selected_folder]
 
     def _ok(self, tag: str, operation: str) -> None:
         self._send(f"{tag} OK {operation} completed\r\n".encode())
@@ -233,6 +354,12 @@ class _Handler(socketserver.StreamRequestHandler):
 
 
 def _parse_login_arguments(arguments: str) -> tuple[str, str]:
+    values = _parse_arguments(arguments)
+    values.extend([""] * (2 - len(values)))
+    return values[0], values[1]
+
+
+def _parse_arguments(arguments: str) -> list[str]:
     values: list[str] = []
     current: list[str] = []
     quoted = False
@@ -253,8 +380,11 @@ def _parse_login_arguments(arguments: str) -> tuple[str, str]:
             current.append(character)
     if current:
         values.append("".join(current))
-    values.extend([""] * (2 - len(values)))
-    return values[0], values[1]
+    return values
+
+
+def _quote(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 class MockImapServer:

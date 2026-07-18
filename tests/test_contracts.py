@@ -18,6 +18,12 @@ GOOD_REQUESTS: dict[str, dict[str, object]] = {
     "mail_search": {"query": "from:sender@example.org", "limit": 10},
     "mail_read": {"message_id": "message-1"},
     "mail_get_thread": {"thread_id": "thread-1"},
+    "mail_list_folders": {},
+    "mail_move": {
+        "message_id": "message-1",
+        "source_folder": "INBOX",
+        "target_folder": "Archiv/2026",
+    },
     "mail_create_draft": {
         "idempotency_key": IDEMPOTENCY_KEY,
         "account_alias": "gmx-primary",
@@ -121,4 +127,37 @@ def test_unknown_tool_and_invalid_uuid_are_rejected() -> None:
         validate_request(
             "mail_add_attachment",
             GOOD_REQUESTS["mail_add_attachment"] | {"content_base64": "not base64"},
+        )
+
+
+@pytest.mark.parametrize("tool_name", ["mail_search", "mail_read", "mail_get_thread"])
+def test_read_tools_accept_an_optional_unicode_folder(tool_name: str) -> None:
+    request = validate_request(tool_name, GOOD_REQUESTS[tool_name] | {"folder": "Entwürfe"})
+    assert request.folder == "Entwürfe"
+
+
+@pytest.mark.parametrize("folder", ["", "x" * 256, "INBOX\rTrash", "INBOX\nTrash", "a\0b"])
+def test_folder_boundaries_and_injection_are_rejected(folder: str) -> None:
+    with pytest.raises(ContractValidationError):
+        validate_request("mail_read", {"message_id": "1", "folder": folder})
+    with pytest.raises(ContractValidationError):
+        validate_request(
+            "mail_move",
+            {
+                "message_id": "1",
+                "source_folder": "INBOX",
+                "target_folder": folder,
+            },
+        )
+
+
+def test_move_requires_distinct_source_and_target_folders() -> None:
+    with pytest.raises(ContractValidationError):
+        validate_request(
+            "mail_move",
+            {
+                "message_id": "1",
+                "source_folder": "Archiv",
+                "target_folder": "Archiv",
+            },
         )
