@@ -10,8 +10,10 @@ owner.
   the official GNU source and committed verbatim as `LICENSE`.
 - The one-time license finalization workflow removed itself after committing the
   license and is not part of the final release tree.
-- The complete CI and full-history secret scan must pass again on the final
-  release-branch head before publication approval.
+- Final CI run `29678195589` passed on commit
+  `37c8032c18b6f29c30d5ea2e78dab6a8132b551d`, including Python 3.12 and 3.13,
+  Ruff, the complete test suite, package builds, clean wheel installation,
+  shell-syntax validation and the full-history Gitleaks scan.
 
 ## Source and history
 
@@ -29,10 +31,10 @@ owner.
 ## Legal and project metadata
 
 - [ ] Repository owner approved `AGPL-3.0-or-later`.
-- [ ] Canonical unmodified AGPL-3.0 license text is included in release source
+- [x] Canonical unmodified AGPL-3.0 license text is included in release source
       and built artifacts.
 - [ ] Copyright notice is correct.
-- [ ] Package version is `0.1.0`.
+- [x] Package version is `0.1.0`.
 - [ ] README, package metadata and release notes agree on features and limits.
 - [ ] Third-party code and generated material have compatible provenance.
 
@@ -58,14 +60,14 @@ owner.
 
 ## Quality
 
-- [ ] `ruff check .` passes.
-- [ ] Full `pytest` suite passes on Python 3.12.
-- [ ] Full `pytest` suite passes on Python 3.13.
-- [ ] Wheel and source distribution build successfully.
-- [ ] Built wheel installs in a clean environment.
+- [x] `ruff check .` passes.
+- [x] Full `pytest` suite passes on Python 3.12.
+- [x] Full `pytest` suite passes on Python 3.13.
+- [x] Wheel and source distribution build successfully.
+- [x] Built wheel installs in a clean environment.
 - [ ] Installed console command starts and fails safely without credentials.
 - [ ] OpenClaw skill is recognized from a clean workspace installation.
-- [ ] CI uses no real provider credentials and no external mailbox.
+- [x] CI uses no real provider credentials and no external mailbox.
 
 ## Documentation
 
@@ -80,9 +82,9 @@ owner.
 
 - [ ] Release candidate reviewed by Fable 5.
 - [ ] Implementation and tests reviewed by a second actor.
-- [ ] Final commit SHA recorded.
+- [x] Final commit SHA recorded.
 - [ ] Source archive hash recorded.
 - [ ] Repository owner explicitly approved public visibility.
 - [ ] Public release/tag created only after approval.
-- [ ] Production VM02 remains pinned to its separately approved commit until a
+- [x] Production VM02 remains pinned to its separately approved commit until a
       migration is planned and tested.
