@@ -1,54 +1,57 @@
 # NOEMA Mail Gateway
 
+<p align="center">
+  <img src="docs/assets/noema-mail-gateway-lockup.svg" alt="NOEMA Mail Gateway — Your AI drafts. You decide." width="920">
+</p>
+
 ## DraftSafe Community Edition
 
 **Your AI drafts. You decide.**
 
-A security-focused local IMAP gateway for OpenClaw and other AI-agent systems.
-Ask your assistant through Telegram or another OpenClaw interface to research a
-mail thread, prepare an inquiry, draft an offer or organize a mailbox. The
-result appears as a synchronized draft in the user's normal mail client. The
-human reviews it and sends it manually.
+NOEMA Mail Gateway is a security-focused local IMAP gateway for OpenClaw and
+other model-neutral AI-agent systems. An assistant can research a mail thread,
+prepare an inquiry, draft an offer or organize selected mailbox content. The
+result is synchronized into the mailbox Drafts folder and appears in normal
+IMAP clients such as Thunderbird, Outlook and other compatible mail programs.
+The human reviews and sends it manually.
 
 **No automatic sending. No permanent deletion. No mailbox password inside the
 AI agent.**
 
-## The idea in one minute
+## How it works
 
 ```text
-You, using Telegram or another OpenClaw interface
-        |
-        | “Prepare an inquiry and put it in my drafts.”
-        v
 OpenClaw with your chosen AI model
         |
-        | validated mail tools
+        | validated local mail tools
         v
 NOEMA Mail Gateway
         |
         | local Unix socket + TLS IMAP
         v
-Your mailbox Drafts folder
+Mailbox Drafts folder
         |
         | human review and manual send
         v
 Recipient
 ```
 
-The assistant can do the time-consuming preparation. The final external action
-stays with the mailbox owner.
+Mail content is always treated as untrusted data. A message cannot authorize a
+new action, override policy or expose credentials.
 
-## Status
+## Release status
 
 `v0.1.0 — DraftSafe Community Edition` release candidate:
 
-- GMX: exercised against a real mailbox
-- generic TLS IMAP with password or app-password authentication: experimental
+- GMX: productively tested against a real mailbox
+- generic TLS IMAP providers using password or app-password authentication:
+  experimental
 - OAuth2-only providers: not yet supported
 - SMTP delivery: not implemented
-- permanent deletion / mailbox expunge: not exposed
+- automatic sending: not implemented
+- permanent deletion and unrestricted mailbox expunge: not exposed
 
-See [Provider compatibility](docs/PROVIDERS.md) before connecting a mailbox.
+See [Provider compatibility](docs/PROVIDERS.md).
 
 ## Quick installation
 
@@ -60,49 +63,54 @@ Requirements:
 - a dedicated app password where supported
 - OpenClaw only when the bundled skill is desired
 
-Clone the reviewed release and install the gateway. Replace `<openclaw-user>`
-with the local user that runs OpenClaw:
+Clone the reviewed repository and select the release:
 
 ```bash
-git clone https://github.com/woellnersandra-code/noema-mail-gateway.git
+git clone https://github.com/noema-ai-open/noema-mail-gateway.git
 cd noema-mail-gateway
+git checkout release/v0.1.0-public
+```
+
+After publication, use the immutable tag instead:
+
+```bash
 git checkout v0.1.0
+```
+
+Install the gateway. Replace `<openclaw-user>` with the local user running
+OpenClaw:
+
+```bash
 sudo bash scripts/install-community.sh --client-user <openclaw-user>
 ```
 
-Enter the account settings and app password interactively:
+Configure the account and credential interactively:
 
 ```bash
 sudo bash scripts/set-imap-credential.sh
 ```
 
-**Run this script without arguments.** It deliberately rejects passwords passed
-on the command line. The password is entered twice with terminal echo disabled
-and stored only in the root-owned credential file with mode `0600`. It is not
-written to GitHub, a README, a normal environment variable or shell history.
+Run the credential script without arguments. It asks for the IMAP account and
+server, then requests the password twice with terminal echo disabled. It does
+not accept passwords through command-line arguments, print password fragments,
+show password length or store the secret in shell history, documentation or a
+normal `.env` file. The secret is written only to a root-owned systemd
+credential file with mode `0600`.
 
-Start the gateway:
+Start the service only after reviewing the non-secret configuration:
 
 ```bash
 sudo systemctl start noema-mail-gateway
 systemctl status noema-mail-gateway --no-pager -l
 ```
 
-Install the skill as the OpenClaw user, not as root:
+Install the OpenClaw skill as the OpenClaw user, not as root:
 
 ```bash
 bash scripts/install-openclaw-skill.sh
 ```
 
-Then start a fresh OpenClaw session and begin with a read-only test.
-
-The complete procedure, security checks, emergency stop and migration from the
-private `m9_*.sh` rollout helpers are documented in
-[docs/INSTALL.md](docs/INSTALL.md).
-
-> If a mailbox password has ever appeared in a README, chat, screenshot,
-> command argument, shell history or log, revoke it at the provider and create a
-> new one before using the gateway.
+Read the complete procedure in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Available tools
 
@@ -118,24 +126,23 @@ private `m9_*.sh` rollout helpers are documented in
 | `mail_add_attachment` | Stage validated attachment bytes and return an attachment ID |
 | `mail_get_draft_summary` | Return a reviewable draft summary |
 
-The gateway does not expose arbitrary IMAP commands, shell commands, arbitrary
-local paths, SMTP delivery or permanent deletion.
+The gateway exposes no arbitrary IMAP commands, shell commands, arbitrary local
+paths, SMTP sending or permanent deletion.
 
 ## Security properties
 
 - local Unix-domain socket instead of a public TCP API
 - dedicated unprivileged service account
 - TLS-only production IMAP connection
-- systemd credential loading; no password in source, normal environment files,
-  logs, SQLite or agent memory
+- systemd credential loading
+- no password in source, regular environment files, logs, SQLite or agent memory
 - hidden interactive credential entry with no command-line password
 - strict request contracts, size limits and safe error messages
 - append-only metadata audit without full message bodies
 - controlled attachment staging with path, type, size and hash validation
 - read operations use IMAP read-only selection and `BODY.PEEK`
-- message move uses `UID MOVE` when available, otherwise a UID-scoped fallback
-- all mail content is treated as data, never as an instruction or authorization
-- no send and no permanent-delete tool in `v0.1.0`
+- mail content is data, never an instruction or authorization
+- no sending and no permanent-delete tool in `v0.1.0`
 
 Read [SECURITY.md](SECURITY.md) and the threat model under `docs/` before a
 production deployment.
@@ -149,30 +156,20 @@ The setup script writes:
 /etc/noema-mail/gmx_app_password.cred
 ```
 
-The first file contains only non-secret connection settings. The second holds
-the app password, is root-owned and has mode `0600`. Its legacy GMX-oriented
-filename remains in v0.1 for compatibility; the IMAP host and account are
-configurable.
+`environment` contains non-secret connection settings only. The credential file
+contains the IMAP password, is owned by root and has mode `0600`. The legacy
+GMX-oriented credential filename remains in v0.1 for compatibility; account and
+server are configurable.
 
 Never commit either local file.
 
 ## OpenClaw skill
 
-The model-neutral skill lives in `openclaw-skill/mail/`. It calls no OpenAI,
-Anthropic or other model API directly. It forwards structured JSON requests to
+The model-neutral skill lives in `openclaw-skill/mail/`. It calls no model API
+directly. It forwards structured JSON requests to
 `/run/noema-mail/gateway.sock`.
 
-The installer:
-
-```bash
-bash scripts/install-openclaw-skill.sh
-```
-
-copies the skill, backs up `~/.openclaw/openclaw.json`, adds only
-`skills.entries.mail.enabled = true`, validates the JSON and preserves mode
-`0600`.
-
-## Development
+## Development and release validation
 
 ```bash
 python3.12 -m venv .venv
@@ -185,16 +182,9 @@ python -m build
 bash -n scripts/*.sh
 ```
 
-All automated tests use local mocks. CI must never connect to a real mailbox.
-
-## Provider compatibility
-
-Provider behavior differs in authentication, folder naming, search, draft
-identity and move capabilities. GMX-specific production fixes are included,
-but another provider is not described as supported until it passes the defined
-compatibility profile.
-
-See [docs/PROVIDERS.md](docs/PROVIDERS.md).
+CI executes lint, the complete test suite, package build, clean-wheel
+installation and shell syntax validation on Python 3.12 and 3.13. Automated
+tests use local mocks and must never connect to a real mailbox.
 
 ## Project layout
 
@@ -206,23 +196,22 @@ scripts/                   installation and secure credential helpers
 tests/                     isolated unit, contract and integration tests
 systemd/                   hardened service template
 config/                    non-secret example configuration
-docs/                      installation, architecture, threat model and operations
+docs/                      installation, security, operations and release assets
 ```
 
-## Community edition
+## Branding assets
 
-DraftSafe Community Edition is a free, inspectable foundation for useful
-AI-assisted email workflows without handing final send control to an autonomous
-agent.
+Public SVG assets are stored under `docs/assets/`:
 
-Ideas, provider test reports and security-focused contributions are welcome.
-The safety boundaries are part of the product and not optional limitations.
+- `noema-mail-gateway-mark.svg`
+- `noema-mail-gateway-lockup.svg`
+- `noema-mail-gateway-social.svg`
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+They contain no embedded account, device or screenshot metadata.
 
 ## License
 
-Copyright © 2026 Sandra Wöllner.
+Copyright © 2026 NOEMA AI contributors.
 
 Licensed under the GNU Affero General Public License v3.0 or later
 (`AGPL-3.0-or-later`). See [LICENSE](LICENSE).
