@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
-authors = [{name = "Sandra Wöllner"}]
+authors = [{name = "NOEMA AI contributors"}]
 dependencies = []
 keywords = ["imap", "email", "openclaw", "ai-agent", "local-first", "security"]
 classifiers = [
@@ -26,9 +26,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/woellnersandra-code/noema-mail-gateway"
-Repository = "https://github.com/woellnersandra-code/noema-mail-gateway"
-Issues = "https://github.com/woellnersandra-code/noema-mail-gateway/issues"
+Homepage = "https://github.com/noema-ai-open/noema-mail-gateway"
+Repository = "https://github.com/noema-ai-open/noema-mail-gateway"
+Issues = "https://github.com/noema-ai-open/noema-mail-gateway/issues"
+Documentation = "https://github.com/noema-ai-open/noema-mail-gateway/tree/main/docs"
 
 [project.scripts]
 noema-mail-gateway = "noema_mail_gateway.app:main"
