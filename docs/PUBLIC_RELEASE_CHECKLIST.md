@@ -4,6 +4,15 @@ No repository visibility change or public tag may be created until every
 required item is checked and the final result is approved by the repository
 owner.
 
+## Current release-candidate verification
+
+- The canonical GNU AGPL version 3 plain-text license has been downloaded from
+  the official GNU source and committed verbatim as `LICENSE`.
+- The one-time license finalization workflow removed itself after committing the
+  license and is not part of the final release tree.
+- The complete CI and full-history secret scan must pass again on the final
+  release-branch head before publication approval.
+
 ## Source and history
 
 - [ ] Full Git history scanned with two independent secret-detection methods.
