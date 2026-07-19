@@ -1,0 +1,13 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic idempotency UUID used only by isolated tests"
+regexes = [
+  '''f5d61e50-08a7-4fd0-ab21-d714a6c9042d''',
+]
+paths = [
+  '''^tests/test_contracts\.py$''',
+  '''^tests/test_casebrain\.py$''',
+  '''^tests/test_server\.py$''',
+]
