@@ -73,7 +73,7 @@ if [[ -z ${python_bin} ]]; then
   exit 4
 fi
 
-for command_name in systemctl install groupadd useradd getent; do
+for command_name in systemctl install groupadd useradd usermod getent; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "Required command is missing: ${command_name}" >&2
     exit 4
