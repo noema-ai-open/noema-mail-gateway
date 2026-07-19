@@ -4,19 +4,39 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "noema-mail-gateway"
-version = "0.0.0"
-description = "Secure local mail gateway for NOEMA/Lumi"
+version = "0.1.0"
+description = "Security-focused local IMAP gateway and model-neutral OpenClaw mail skill"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "Proprietary"}
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [{name = "Sandra Wöllner"}]
 dependencies = []
+keywords = ["imap", "email", "openclaw", "ai-agent", "local-first", "security"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: No Input/Output (Daemon)",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Email",
+  "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://github.com/woellnersandra-code/noema-mail-gateway"
+Repository = "https://github.com/woellnersandra-code/noema-mail-gateway"
+Issues = "https://github.com/woellnersandra-code/noema-mail-gateway/issues"
 
 [project.scripts]
 noema-mail-gateway = "noema_mail_gateway.app:main"
 
 [project.optional-dependencies]
 dev = [
+  "build>=1.2",
   "pytest>=8.3",
   "ruff>=0.9",
 ]
