@@ -1,34 +1,81 @@
 # Security Policy
 
-## Schutzbedarf
+NOEMA Mail Gateway processes highly sensitive communication data. Security
+boundaries are a core part of the project and not optional deployment advice.
 
-Dieses Projekt verarbeitet potenziell medizinische, behördliche, berufliche und persönliche Kommunikationsdaten. Vertraulichkeit, Integrität und nachvollziehbare Freigaben sind Kernanforderungen.
+## Supported versions
 
-## Niemals committen
+| Version | Supported |
+| --- | --- |
+| `0.1.x` | Security fixes during the public alpha |
+| `< 0.1` | Internal development history only |
 
-- `.env` und Backups davon
-- Passwörter, Tokens, API-Keys und Cookies
-- systemd-Credential-Dateien
-- Thunderbird- oder Browserprofile
-- private SSH-Schlüssel
-- SQLite-, Datenbank- oder Memory-Dateien
-- E-Mail-Inhalte, Exporte und Anhänge
-- medizinische oder behördliche Unterlagen
-- produktive Konfigurationen mit personenbezogenen Daten
+## Reporting a vulnerability
 
-## Sicherheitsgrenzen
+Do not open a public issue containing a password, token, private key, real mail
+content, attachment, mailbox address or other personal data.
 
-- Eigener unprivilegierter Dienstbenutzer `noema-mail`
-- Keine Mitgliedschaft in `sudo` oder `docker`
-- Kein Zugriff auf `/home/noema/.openclaw`
-- Kein Zugriff auf Thunderbird- oder Browserprofile
-- Kommunikation nur über Unix Domain Socket oder Loopback
-- Keine eingehende LAN- oder Internetfreigabe
-- SMTP standardmäßig deaktiviert
-- Freigaben müssen Empfänger, Inhalt und Anlagen kryptografisch binden
-- Jede Änderung nach Freigabe macht die Freigabe ungültig
-- Alle externen Inhalte werden als nicht vertrauenswürdig behandelt
+Open a minimal private contact with the repository owner through a GitHub
+security advisory when that feature is available. Otherwise, open a public
+issue containing only the words `Security contact requested` and no technical
+secret; the maintainer will provide a private channel.
 
-## Meldung von Sicherheitsproblemen
+A useful report contains:
 
-Sicherheitsprobleme nicht als öffentliche Issue mit Geheimnissen oder personenbezogenen Daten einstellen. Interne Meldung an die Repository-Eigentümerin ohne Originaldaten und ohne Secret-Werte.
+- affected version or commit
+- affected component
+- safe reproduction steps using placeholders or a mock server
+- expected and observed security boundary
+- impact assessment
+- whether a credential may have been exposed
+
+Never include a live exploit against someone else's mailbox.
+
+## Never commit
+
+- `.env` files and backups
+- mailbox passwords, app passwords, tokens, API keys, cookies or session data
+- systemd credential files or encrypted credentials tied to a real deployment
+- Thunderbird, browser or agent profiles
+- private SSH keys
+- SQLite databases, mail exports, message bodies or attachments
+- medical, legal, governmental or other personal documents
+- production configurations containing real addresses, hosts or internal paths
+
+## Required security boundaries
+
+- dedicated unprivileged gateway service account
+- no membership in `sudo` or `docker`
+- no access to the agent workspace, browser profile or mail-client profile
+- local Unix-domain socket; no public gateway port
+- TLS-only production IMAP path
+- credentials isolated from the agent and loaded through a protected service
+  mechanism
+- strict tool allowlist and request contracts
+- safe error messages without server responses, secrets or tracebacks
+- append-only metadata audit without full mail content
+- external mail, HTML and attachments treated as untrusted data
+- no SMTP delivery tool in `v0.1`
+- no permanent-delete or unrestricted expunge tool in `v0.1`
+- attachments accepted only through controlled staging, IDs and hashes
+
+## Security-sensitive changes
+
+The following changes require an architecture decision, explicit threat-model
+update and dedicated review:
+
+- SMTP delivery or any `send` tool
+- permanent deletion or bulk mailbox mutation
+- OAuth2 token storage
+- public TCP or HTTP transport
+- direct browser or Thunderbird automation
+- arbitrary filesystem access
+- multi-account credential routing
+- relaxing systemd sandboxing or socket permissions
+
+## Response expectations
+
+Maintainers will acknowledge a complete report as soon as reasonably possible,
+confirm whether it is reproducible, and coordinate remediation and credential
+rotation before public disclosure. No fixed response-time guarantee is offered
+for this volunteer-maintained alpha project.
