@@ -1,24 +1,29 @@
-# VORLAGE — nicht ohne Freigabe installieren
-# Diese Unit wird erst mit dem Server aus M7 vervollständigt und in M9 freigegeben.
-
 [Unit]
 Description=NOEMA Mail Gateway
+Documentation=https://github.com/woellnersandra-code/noema-mail-gateway
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-Restart=on-failure
-RestartSec=5
 User=noema-mail
 Group=noema-mail
-RuntimeDirectory=noema-mail
-RuntimeDirectoryMode=0700
-StateDirectory=noema-mail
-StateDirectoryMode=0700
 UMask=0077
 
+EnvironmentFile=/etc/noema-mail/environment
+# Compatibility credential name used by v0.1. The account and IMAP host remain
+# configurable even though the first tested deployment used GMX.
 LoadCredential=gmx_app_password:/etc/noema-mail/gmx_app_password.cred
+
+RuntimeDirectory=noema-mail
+RuntimeDirectoryMode=0750
+StateDirectory=noema-mail
+StateDirectoryMode=0700
+
+ExecStart=/opt/noema-mail-gateway/venv/bin/noema-mail-gateway
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
 
 NoNewPrivileges=yes
 PrivateTmp=yes
@@ -27,20 +32,22 @@ ProtectSystem=strict
 ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
+ProtectKernelLogs=yes
 ProtectControlGroups=yes
+ProtectClock=yes
 RestrictNamespaces=yes
+RestrictSUIDSGID=yes
 CapabilityBoundingSet=
+AmbientCapabilities=
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
-ReadWritePaths=/var/lib/noema-mail
+ReadWritePaths=/var/lib/noema-mail /run/noema-mail
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-IPAddressDeny=any
+SystemCallArchitectures=native
 
-# M3 muss ausschließlich die benötigten IMAP-Zielnetze festlegen, zum Beispiel:
-# IPAddressAllow=<GMX-IMAP-Zielnetz>
-
-# Platzhalter bis zur Implementierung des Gateway-Servers in M7:
-# ExecStart=/usr/bin/noema-mail-gateway
+# Provider IP ranges may change. Apply an egress policy through a maintained
+# host firewall or a reviewed systemd drop-in rather than copying stale example
+# addresses into the distributed unit.
 
 [Install]
 WantedBy=multi-user.target
