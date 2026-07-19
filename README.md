@@ -1,6 +1,17 @@
 # NOEMA Mail Gateway
 
-A security-focused local IMAP gateway for AI agents and automation systems.
+## DraftSafe Community Edition
+
+**Your AI drafts. You decide.**
+
+A security-focused local IMAP gateway for OpenClaw and other AI-agent systems.
+Ask your assistant through Telegram or another OpenClaw interface to research a
+mail thread, prepare an inquiry, draft an offer or organize a mailbox. The
+result appears as a synchronized draft in the user's normal mail client. The
+human reviews it and sends it manually.
+
+No automatic sending. No permanent deletion. No mailbox password inside the AI
+agent.
 
 NOEMA Mail Gateway exposes a small, validated tool surface over a local Unix
 socket. It can search and read mail, inspect folders and threads, maintain
@@ -12,9 +23,34 @@ The included OpenClaw skill is model-neutral. It does not call OpenAI,
 Anthropic or any other model provider directly; it only forwards structured
 JSON requests to the local gateway.
 
+## The idea in one minute
+
+```text
+You, using Telegram or another OpenClaw interface
+        |
+        | “Prepare an inquiry and put it in my drafts.”
+        v
+OpenClaw with your chosen AI model
+        |
+        | validated mail tools
+        v
+NOEMA Mail Gateway
+        |
+        | local Unix socket + TLS IMAP
+        v
+Your mailbox Drafts folder
+        |
+        | human review and manual send
+        v
+Recipient
+```
+
+The assistant can do the time-consuming preparation. The final external action
+stays with the mailbox owner.
+
 ## Status
 
-`v0.1.0` release candidate:
+`v0.1.0 — DraftSafe Community Edition` release candidate:
 
 - GMX: exercised against a real mailbox
 - generic TLS IMAP with password or app-password authentication: experimental
@@ -29,23 +65,7 @@ See [Provider compatibility](docs/PROVIDERS.md) before connecting a mailbox.
 Giving an AI agent unrestricted access to a mailbox is dangerous. Mail content,
 HTML and attachments are untrusted input and may contain prompt-injection
 attempts. NOEMA Mail Gateway places a narrow policy boundary between the agent
-and the mail provider:
-
-```text
-AI agent / OpenClaw
-        |
-        | validated JSON tools
-        v
-OpenClaw mail skill
-        |
-        | local Unix socket
-        v
-NOEMA Mail Gateway
-        |
-        | TLS IMAP
-        v
-Mail provider
-```
+and the mail provider.
 
 Credentials remain inside the gateway service. The agent receives no mailbox
 password and no arbitrary filesystem or network access through the mail tools.
@@ -181,6 +201,15 @@ systemd/                   hardened service template
 config/                    non-secret example configuration
 docs/                      architecture, threat model and operations
 ```
+
+## Community edition
+
+DraftSafe Community Edition is intended as a free, inspectable foundation for
+people who want useful AI-assisted email workflows without handing final send
+control to an autonomous agent.
+
+Ideas, provider test reports and security-focused contributions are welcome.
+The safety boundaries are part of the product and not optional limitations.
 
 ## Contributing
 
