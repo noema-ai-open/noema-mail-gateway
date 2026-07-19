@@ -52,7 +52,9 @@ def test_unit_contains_every_required_hardening_directive() -> None:
         "RuntimeDirectoryMode": ["0750"],
         "StateDirectory": ["noema-mail"],
         "StateDirectoryMode": ["0700"],
-        "LoadCredential": ["gmx_app_password:/etc/noema-mail/imap_password.cred"],
+        "LoadCredential": [
+            "gmx_app_password:/etc/noema-mail/gmx_app_password.cred"
+        ],
         "RestrictAddressFamilies": ["AF_UNIX AF_INET AF_INET6"],
         "SystemCallArchitectures": ["native"],
     }
