@@ -11,9 +11,9 @@ Group=noema-mail
 UMask=0077
 
 EnvironmentFile=/etc/noema-mail/environment
-# Compatibility credential name used by v0.1. M11 introduces a configurable
-# generic name without breaking the first GMX deployment.
-LoadCredential=gmx_app_password:/etc/noema-mail/imap_password.cred
+# Compatibility credential name used by v0.1. The account and IMAP host remain
+# configurable even though the first tested deployment used GMX.
+LoadCredential=gmx_app_password:/etc/noema-mail/gmx_app_password.cred
 
 RuntimeDirectory=noema-mail
 RuntimeDirectoryMode=0750
