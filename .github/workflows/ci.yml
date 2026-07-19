@@ -59,7 +59,19 @@ jobs:
       - name: Ruff lint
         run: ruff check .
       - name: Pytest
-        run: pytest
+        id: pytest
+        continue-on-error: true
+        run: pytest --junitxml="pytest-${{ matrix.python-version }}.xml"
+      - name: Upload Pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-${{ matrix.python-version }}
+          path: pytest-${{ matrix.python-version }}.xml
+          if-no-files-found: error
+      - name: Fail when Pytest failed
+        if: steps.pytest.outcome == 'failure'
+        run: exit 1
       - name: Build wheel and source distribution
         run: python -m build
       - name: Verify wheel installs in a clean virtual environment
