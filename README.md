@@ -10,18 +10,8 @@ mail thread, prepare an inquiry, draft an offer or organize a mailbox. The
 result appears as a synchronized draft in the user's normal mail client. The
 human reviews it and sends it manually.
 
-No automatic sending. No permanent deletion. No mailbox password inside the AI
-agent.
-
-NOEMA Mail Gateway exposes a small, validated tool surface over a local Unix
-socket. It can search and read mail, inspect folders and threads, maintain
-mailbox drafts, stage attachments and move messages between folders. The
-current release deliberately provides **no mail-sending tool and no permanent
-delete operation**.
-
-The included OpenClaw skill is model-neutral. It does not call OpenAI,
-Anthropic or any other model provider directly; it only forwards structured
-JSON requests to the local gateway.
+**No automatic sending. No permanent deletion. No mailbox password inside the
+AI agent.**
 
 ## The idea in one minute
 
@@ -60,15 +50,59 @@ stays with the mailbox owner.
 
 See [Provider compatibility](docs/PROVIDERS.md) before connecting a mailbox.
 
-## Why this exists
+## Quick installation
 
-Giving an AI agent unrestricted access to a mailbox is dangerous. Mail content,
-HTML and attachments are untrusted input and may contain prompt-injection
-attempts. NOEMA Mail Gateway places a narrow policy boundary between the agent
-and the mail provider.
+Requirements:
 
-Credentials remain inside the gateway service. The agent receives no mailbox
-password and no arbitrary filesystem or network access through the mail tools.
+- Linux with systemd
+- Python 3.12 or newer
+- an IMAP mailbox with TLS
+- a dedicated app password where supported
+- OpenClaw only when the bundled skill is desired
+
+Clone the reviewed release and install the gateway. Replace `<openclaw-user>`
+with the local user that runs OpenClaw:
+
+```bash
+git clone https://github.com/woellnersandra-code/noema-mail-gateway.git
+cd noema-mail-gateway
+git checkout v0.1.0
+sudo bash scripts/install-community.sh --client-user <openclaw-user>
+```
+
+Enter the account settings and app password interactively:
+
+```bash
+sudo bash scripts/set-imap-credential.sh
+```
+
+**Run this script without arguments.** It deliberately rejects passwords passed
+on the command line. The password is entered twice with terminal echo disabled
+and stored only in the root-owned credential file with mode `0600`. It is not
+written to GitHub, a README, a normal environment variable or shell history.
+
+Start the gateway:
+
+```bash
+sudo systemctl start noema-mail-gateway
+systemctl status noema-mail-gateway --no-pager -l
+```
+
+Install the skill as the OpenClaw user, not as root:
+
+```bash
+bash scripts/install-openclaw-skill.sh
+```
+
+Then start a fresh OpenClaw session and begin with a read-only test.
+
+The complete procedure, security checks, emergency stop and migration from the
+private `m9_*.sh` rollout helpers are documented in
+[docs/INSTALL.md](docs/INSTALL.md).
+
+> If a mailbox password has ever appeared in a README, chat, screenshot,
+> command argument, shell history or log, revoke it at the provider and create a
+> new one before using the gateway.
 
 ## Available tools
 
@@ -94,6 +128,7 @@ local paths, SMTP delivery or permanent deletion.
 - TLS-only production IMAP connection
 - systemd credential loading; no password in source, normal environment files,
   logs, SQLite or agent memory
+- hidden interactive credential entry with no command-line password
 - strict request contracts, size limits and safe error messages
 - append-only metadata audit without full message bodies
 - controlled attachment staging with path, type, size and hash validation
@@ -105,90 +140,61 @@ local paths, SMTP delivery or permanent deletion.
 Read [SECURITY.md](SECURITY.md) and the threat model under `docs/` before a
 production deployment.
 
-## Requirements
+## Configuration files
 
-- Linux
-- Python 3.12 or newer
-- an IMAP account supporting TLS on a dedicated port
-- a dedicated mailbox password or app password
-- systemd for the hardened service example
-- OpenClaw only when the bundled skill is desired
+The setup script writes:
 
-The Python gateway itself has no runtime dependencies outside the standard
-library.
+```text
+/etc/noema-mail/environment
+/etc/noema-mail/gmx_app_password.cred
+```
 
-## Development setup
+The first file contains only non-secret connection settings. The second holds
+the app password, is root-owned and has mode `0600`. Its legacy GMX-oriented
+filename remains in v0.1 for compatibility; the IMAP host and account are
+configurable.
+
+Never commit either local file.
+
+## OpenClaw skill
+
+The model-neutral skill lives in `openclaw-skill/mail/`. It calls no OpenAI,
+Anthropic or other model API directly. It forwards structured JSON requests to
+`/run/noema-mail/gateway.sock`.
+
+The installer:
 
 ```bash
-git clone https://github.com/woellnersandra-code/noema-mail-gateway.git
-cd noema-mail-gateway
+bash scripts/install-openclaw-skill.sh
+```
+
+copies the skill, backs up `~/.openclaw/openclaw.json`, adds only
+`skills.entries.mail.enabled = true`, validates the JSON and preserves mode
+`0600`.
+
+## Development
+
+```bash
 python3.12 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[dev]'
 ruff check .
 pytest
+python -m build
+bash -n scripts/*.sh
 ```
 
 All automated tests use local mocks. CI must never connect to a real mailbox.
 
-## Configuration
-
-Copy the example configuration and adjust only non-secret values:
-
-```bash
-sudo install -d -m 0750 /etc/noema-mail
-sudo install -m 0640 config/noema-mail.env.example /etc/noema-mail/environment
-```
-
-Important settings:
-
-```text
-NOEMA_MAIL_IMAP_HOST=imap.example.org
-NOEMA_MAIL_IMAP_PORT=993
-NOEMA_MAIL_ACCOUNT=user@example.org
-NOEMA_MAIL_ACCOUNT_ALIAS=primary
-NOEMA_MAIL_INBOX_FOLDER=INBOX
-NOEMA_MAIL_DRAFTS_FOLDER=Drafts
-NOEMA_MAIL_IMAP_TIMEOUT=15
-```
-
-The password must be supplied as a systemd credential, not placed in the
-configuration file. The release branch retains documented compatibility with
-the existing GMX deployment while the public configuration uses generic IMAP
-terminology.
-
-See [Operations](docs/OPERATIONS.md) for the service layout and deployment
-procedure.
-
-## OpenClaw skill
-
-The skill source is in `openclaw-skill/mail/`.
-
-Install it into an OpenClaw workspace:
-
-```bash
-install -d -m 0750 ~/.openclaw/workspace/skills/mail
-install -m 0644 openclaw-skill/mail/SKILL.md \
-  ~/.openclaw/workspace/skills/mail/SKILL.md
-install -m 0755 openclaw-skill/mail/mail-client.py \
-  ~/.openclaw/workspace/skills/mail/mail-client.py
-```
-
-The client connects to `/run/noema-mail/gateway.sock` by default. Tests may
-override the path with `NOEMA_MAIL_SOCKET`.
-
-OpenClaw must be permitted to access the socket through a narrowly scoped local
-group. It must not receive access to the credential file or gateway state.
-
 ## Provider compatibility
 
-Provider behavior differs in folder naming, search, draft identity and move
-capabilities. GMX-specific production fixes are already included, but support
-for another provider is not claimed until its behavior has been tested.
+Provider behavior differs in authentication, folder naming, search, draft
+identity and move capabilities. GMX-specific production fixes are included,
+but another provider is not described as supported until it passes the defined
+compatibility profile.
 
-See [docs/PROVIDERS.md](docs/PROVIDERS.md) for the current matrix and the
-required adapter tests.
+See [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Project layout
 
@@ -196,27 +202,21 @@ required adapter tests.
 src/noema_mail_core/       transport-neutral contracts and policy
 src/noema_mail_gateway/    IMAP, drafts, staging, audit and Unix-socket server
 openclaw-skill/mail/       thin model-neutral OpenClaw skill
+scripts/                   installation and secure credential helpers
 tests/                     isolated unit, contract and integration tests
 systemd/                   hardened service template
 config/                    non-secret example configuration
-docs/                      architecture, threat model and operations
+docs/                      installation, architecture, threat model and operations
 ```
 
 ## Community edition
 
-DraftSafe Community Edition is intended as a free, inspectable foundation for
-people who want useful AI-assisted email workflows without handing final send
-control to an autonomous agent.
+DraftSafe Community Edition is a free, inspectable foundation for useful
+AI-assisted email workflows without handing final send control to an autonomous
+agent.
 
 Ideas, provider test reports and security-focused contributions are welcome.
 The safety boundaries are part of the product and not optional limitations.
-
-## Contributing
-
-Security boundaries are part of the public API. Changes that add sending,
-permanent deletion, arbitrary filesystem access or weaker credential handling
-require a separate design review and will not be accepted as routine feature
-work.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
