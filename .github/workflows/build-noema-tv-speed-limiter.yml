@@ -5,13 +5,13 @@ on:
     branches:
       - build/noema-tv-speed-limiter
     paths:
-      - 'noema-tv-speed-limiter-src.tgz'
+      - 'noema-tv-speed-limiter/**'
       - '.github/workflows/build-noema-tv-speed-limiter.yml'
   pull_request:
     branches:
       - main
     paths:
-      - 'noema-tv-speed-limiter-src.tgz'
+      - 'noema-tv-speed-limiter/**'
       - '.github/workflows/build-noema-tv-speed-limiter.yml'
   workflow_dispatch:
 
@@ -23,9 +23,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Extract source
-        run: tar -xzf noema-tv-speed-limiter-src.tgz
 
       - name: Java 17
         uses: actions/setup-java@v5
