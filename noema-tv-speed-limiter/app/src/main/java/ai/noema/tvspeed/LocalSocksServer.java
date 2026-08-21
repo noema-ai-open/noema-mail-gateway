@@ -70,13 +70,20 @@ final class LocalSocksServer implements AutoCloseable {
         while (running) {
             try {
                 Socket client = server.accept();
+                Diagnostics.SOCKS_ACCEPTED.incrementAndGet();
                 client.setTcpNoDelay(true);
                 tcpSockets.add(client);
                 pool.execute(() -> handleClient(client));
             } catch (SocketException e) {
-                if (running) Log.e(TAG, "SOCKS accept failed", e);
+                if (running) {
+                    Diagnostics.error("SOCKS accept: " + e.getMessage());
+                    Log.e(TAG, "SOCKS accept failed", e);
+                }
             } catch (IOException e) {
-                if (running) Log.e(TAG, "SOCKS accept failed", e);
+                if (running) {
+                    Diagnostics.error("SOCKS accept: " + e.getMessage());
+                    Log.e(TAG, "SOCKS accept failed", e);
+                }
             }
         }
     }
@@ -116,25 +123,39 @@ final class LocalSocksServer implements AutoCloseable {
             int port = readU16(rawIn);
 
             if (cmd == 0x01) {
-                handleConnect(c, rawIn, rawOut, target, port);
+                handleConnect(rawIn, rawOut, target, port);
             } else if (cmd == 0x03) {
-                handleUdpAssociate(c, rawIn, rawOut);
+                handleUdpAssociate(rawIn, rawOut);
             } else {
                 writeReply(rawOut, 0x07, loopback4(), 0);
             }
         } catch (EOFException ignored) {
         } catch (Exception e) {
-            if (running) Log.w(TAG, "SOCKS client closed: " + e.getMessage());
+            if (running) {
+                Diagnostics.error("SOCKS client: " + e.getMessage());
+                Log.w(TAG, "SOCKS client closed: " + e.getMessage());
+            }
         } finally {
             tcpSockets.remove(client);
         }
     }
 
-    private void handleConnect(Socket client, InputStream clientIn, OutputStream clientOut,
+    private void handleConnect(InputStream clientIn, OutputStream clientOut,
                                Address target, int port) throws IOException {
-        InetAddress remoteAddress = target.resolve(physicalNetwork);
+        InetAddress remoteAddress;
+        try {
+            remoteAddress = target.resolve(physicalNetwork);
+        } catch (IOException e) {
+            Diagnostics.TCP_CONNECT_FAIL.incrementAndGet();
+            Diagnostics.error("DNS/resolve TCP target: " + e.getMessage());
+            writeReply(clientOut, 0x04, loopback4(), 0);
+            return;
+        }
+
         Socket remote = new Socket();
         if (!vpnService.protect(remote)) {
+            Diagnostics.TCP_CONNECT_FAIL.incrementAndGet();
+            Diagnostics.error("VpnService.protect(TCP) returned false");
             remote.close();
             writeReply(clientOut, 0x01, loopback4(), 0);
             return;
@@ -146,6 +167,7 @@ final class LocalSocksServer implements AutoCloseable {
         try {
             remote.setTcpNoDelay(true);
             remote.connect(new InetSocketAddress(remoteAddress, port), 15_000);
+            Diagnostics.TCP_CONNECT_OK.incrementAndGet();
             InetSocketAddress local = (InetSocketAddress) remote.getLocalSocketAddress();
             writeReply(clientOut, 0x00, local.getAddress(), local.getPort());
 
@@ -157,6 +179,8 @@ final class LocalSocksServer implements AutoCloseable {
             up.start();
             relayDownload(remoteIn, clientOut);
         } catch (IOException e) {
+            Diagnostics.TCP_CONNECT_FAIL.incrementAndGet();
+            Diagnostics.error("TCP " + remoteAddress.getHostAddress() + ":" + port + " " + e.getMessage());
             Log.d(TAG, "TCP connect failed: " + remoteAddress + ":" + port + " " + e.getMessage());
             try { writeReply(clientOut, 0x05, loopback4(), 0); } catch (Exception ignored) {}
         } finally {
@@ -201,10 +225,11 @@ final class LocalSocksServer implements AutoCloseable {
         }
     }
 
-    private void handleUdpAssociate(Socket control, InputStream controlIn, OutputStream controlOut) throws IOException {
+    private void handleUdpAssociate(InputStream controlIn, OutputStream controlOut) throws IOException {
         DatagramSocket clientSide = new DatagramSocket(new InetSocketAddress(loopback4(), 0));
         DatagramSocket internetSide = new DatagramSocket();
         if (!vpnService.protect(internetSide)) {
+            Diagnostics.error("VpnService.protect(UDP) returned false");
             clientSide.close();
             internetSide.close();
             writeReply(controlOut, 0x01, loopback4(), 0);
@@ -218,6 +243,7 @@ final class LocalSocksServer implements AutoCloseable {
         clientSide.setSoTimeout(0);
         internetSide.setSoTimeout(0);
         writeReply(controlOut, 0x00, loopback4(), clientSide.getLocalPort());
+        Diagnostics.UDP_ASSOC.incrementAndGet();
 
         final InetSocketAddress[] lastClient = new InetSocketAddress[1];
 
@@ -232,9 +258,13 @@ final class LocalSocksServer implements AutoCloseable {
                     InetAddress dst = d.address.resolve(physicalNetwork);
                     DatagramPacket out = new DatagramPacket(d.payload, d.payload.length, dst, d.port);
                     internetSide.send(out);
+                    Diagnostics.UDP_OUT.incrementAndGet();
                     TrafficStatsStore.UP.addAndGet(d.payload.length);
                 } catch (Exception e) {
-                    if (running && !clientSide.isClosed()) Log.d(TAG, "UDP upload relay ended: " + e.getMessage());
+                    if (running && !clientSide.isClosed()) {
+                        Diagnostics.error("UDP out: " + e.getMessage());
+                        Log.d(TAG, "UDP upload relay ended: " + e.getMessage());
+                    }
                     break;
                 }
             }
@@ -248,6 +278,7 @@ final class LocalSocksServer implements AutoCloseable {
                 try {
                     DatagramPacket packet = new DatagramPacket(buf, buf.length);
                     internetSide.receive(packet);
+                    Diagnostics.UDP_IN.incrementAndGet();
                     InetSocketAddress clientAddr = lastClient[0];
                     if (clientAddr == null) continue;
                     byte[] wrapped = wrapUdp(packet.getAddress(), packet.getPort(), packet.getData(), packet.getOffset(), packet.getLength());
@@ -260,7 +291,10 @@ final class LocalSocksServer implements AutoCloseable {
                     clientSide.send(new DatagramPacket(wrapped, wrapped.length, clientAddr));
                     TrafficStatsStore.DOWN.addAndGet(packet.getLength());
                 } catch (Exception e) {
-                    if (running && !internetSide.isClosed()) Log.d(TAG, "UDP download relay ended: " + e.getMessage());
+                    if (running && !internetSide.isClosed()) {
+                        Diagnostics.error("UDP in: " + e.getMessage());
+                        Log.d(TAG, "UDP download relay ended: " + e.getMessage());
+                    }
                     break;
                 }
             }
@@ -415,9 +449,7 @@ final class LocalSocksServer implements AutoCloseable {
         final int port;
         final byte[] payload;
         SocksUdpDatagram(Address address, int port, byte[] payload) {
-            this.address = address;
-            this.port = port;
-            this.payload = payload;
+            this.address = address; this.port = port; this.payload = payload;
         }
     }
 }
