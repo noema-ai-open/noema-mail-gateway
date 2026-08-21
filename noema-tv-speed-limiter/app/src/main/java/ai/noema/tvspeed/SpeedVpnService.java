@@ -6,6 +6,9 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
@@ -16,6 +19,8 @@ import com.wgtunnel.hevtunnel.TProxyService;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.Inet4Address;
+import java.net.InetAddress;
 
 public final class SpeedVpnService extends VpnService {
     public static final String ACTION_SET_PROFILE = "ai.noema.tvspeed.SET_PROFILE";
@@ -84,6 +89,10 @@ public final class SpeedVpnService extends VpnService {
         TrafficStatsStore.resetSession();
         startForeground(NOTIFICATION_ID, buildNotification());
 
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        Network underlying = cm != null ? cm.getActiveNetwork() : null;
+        LinkProperties link = (cm != null && underlying != null) ? cm.getLinkProperties(underlying) : null;
+
         socksServer = new LocalSocksServer(this, DOWNLOAD_LIMITER, SOCKS_PORT);
         socksServer.start();
 
@@ -92,12 +101,35 @@ public final class SpeedVpnService extends VpnService {
                 .setMtu(MTU)
                 .setBlocking(true)
                 .addAddress(IPV4, 32)
-                .addAddress(IPV6, 128)
-                .addRoute("0.0.0.0", 0)
-                .addRoute("::", 0)
-                .addDnsServer("1.1.1.1")
-                .addDnsServer("2606:4700:4700::1111");
+                .addRoute("0.0.0.0", 0);
 
+        // Critical: the limiter's own SOCKS/HEV egress must never be captured by its VPN.
+        // Excluding our UID prevents DNS and socket recursion back into the TUN path.
+        try {
+            builder.addDisallowedApplication(getPackageName());
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            throw new IOException("Could not exclude NOEMA app from VPN", e);
+        }
+
+        if (underlying != null) {
+            builder.setUnderlyingNetworks(new Network[]{underlying});
+        }
+
+        boolean addedIpv4Dns = false;
+        if (link != null) {
+            for (InetAddress dns : link.getDnsServers()) {
+                if (dns instanceof Inet4Address) {
+                    builder.addDnsServer(dns);
+                    addedIpv4Dns = true;
+                }
+            }
+        }
+        if (!addedIpv4Dns) {
+            builder.addDnsServer("1.1.1.1");
+        }
+
+        // Alpha 2 deliberately tunnels IPv4 only. This avoids broken IPv6 fallback on
+        // mobile/hotel networks while keeping all normal streaming traffic shaped.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(true);
         }
@@ -128,7 +160,26 @@ public final class SpeedVpnService extends VpnService {
         hevStartThread.setDaemon(true);
         hevStartThread.start();
 
+        // Do not claim ACTIVE until the native tun2socks engine really reports running.
+        boolean hevRunning = false;
+        for (int i = 0; i < 40; i++) {
+            try {
+                if (TProxyService.TProxyIsRunning()) {
+                    hevRunning = true;
+                    break;
+                }
+                Thread.sleep(50L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted while starting HEV tunnel", e);
+            }
+        }
+        if (!hevRunning) {
+            throw new IOException("HEV tun2socks did not start");
+        }
+
         running = true;
+        Log.i(TAG, "Limiter started on IPv4 via physical underlying network");
     }
 
     private synchronized void stopLimiter() {
