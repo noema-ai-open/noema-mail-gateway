@@ -19,7 +19,6 @@ import com.wgtunnel.hevtunnel.TProxyService;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.Inet4Address;
 import java.net.InetAddress;
 
 public final class SpeedVpnService extends VpnService {
@@ -96,15 +95,18 @@ public final class SpeedVpnService extends VpnService {
         socksServer = new LocalSocksServer(this, DOWNLOAD_LIMITER, SOCKS_PORT);
         socksServer.start();
 
+        // HEV's Android reference implementation uses a non-blocking TUN fd.
+        // A blocking fd can leave the native tun2socks engine alive while app traffic stalls.
         Builder builder = new Builder()
                 .setSession("NOEMA TV Speed Limiter")
                 .setMtu(MTU)
-                .setBlocking(true)
+                .setBlocking(false)
                 .addAddress(IPV4, 32)
-                .addRoute("0.0.0.0", 0);
+                .addAddress(IPV6, 128)
+                .addRoute("0.0.0.0", 0)
+                .addRoute("::", 0);
 
-        // Critical: the limiter's own SOCKS/HEV egress must never be captured by its VPN.
-        // Excluding our UID prevents DNS and socket recursion back into the TUN path.
+        // Keep NOEMA's local SOCKS egress outside its own VPN to prevent recursion.
         try {
             builder.addDisallowedApplication(getPackageName());
         } catch (android.content.pm.PackageManager.NameNotFoundException e) {
@@ -115,21 +117,17 @@ public final class SpeedVpnService extends VpnService {
             builder.setUnderlyingNetworks(new Network[]{underlying});
         }
 
-        boolean addedIpv4Dns = false;
+        boolean addedDns = false;
         if (link != null) {
             for (InetAddress dns : link.getDnsServers()) {
-                if (dns instanceof Inet4Address) {
-                    builder.addDnsServer(dns);
-                    addedIpv4Dns = true;
-                }
+                builder.addDnsServer(dns);
+                addedDns = true;
             }
         }
-        if (!addedIpv4Dns) {
+        if (!addedDns) {
             builder.addDnsServer("1.1.1.1");
         }
 
-        // Alpha 2 deliberately tunnels IPv4 only. This avoids broken IPv6 fallback on
-        // mobile/hotel networks while keeping all normal streaming traffic shaped.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(true);
         }
@@ -160,7 +158,6 @@ public final class SpeedVpnService extends VpnService {
         hevStartThread.setDaemon(true);
         hevStartThread.start();
 
-        // Do not claim ACTIVE until the native tun2socks engine really reports running.
         boolean hevRunning = false;
         for (int i = 0; i < 40; i++) {
             try {
@@ -179,7 +176,7 @@ public final class SpeedVpnService extends VpnService {
         }
 
         running = true;
-        Log.i(TAG, "Limiter started on IPv4 via physical underlying network");
+        Log.i(TAG, "Limiter started on dual-stack non-blocking TUN via physical network");
     }
 
     private synchronized void stopLimiter() {
