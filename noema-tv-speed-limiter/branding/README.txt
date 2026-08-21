@@ -1,0 +1,1 @@
+Branding assets for NOEMA TV Speed Limiter. Final app icon and Android TV banner are generated from the approved NOEMA cyan/black visual style. Binary launcher assets are materialized during the release build.
