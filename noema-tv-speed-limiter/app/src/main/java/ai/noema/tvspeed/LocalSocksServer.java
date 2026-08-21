@@ -27,7 +27,7 @@ import java.util.concurrent.Executors;
 /**
  * Minimal local SOCKS5 server used as the direct-to-internet egress for HEV tun2socks.
  * Remote sockets are protected from the Android VPN and, when available, explicitly
- * bound to the selected physical network. TCP CONNECT and UDP ASSOCIATE are supported.
+ * created on the selected physical network. TCP CONNECT and UDP ASSOCIATE are supported.
  */
 final class LocalSocksServer implements AutoCloseable {
     private static final String TAG = "NoemaSocks";
@@ -152,17 +152,34 @@ final class LocalSocksServer implements AutoCloseable {
             return;
         }
 
-        Socket remote = new Socket();
+        Socket remote;
+        try {
+            if (physicalNetwork != null) {
+                // Android 9 creates java.net.Socket file descriptors lazily. Calling
+                // VpnService.protect() on a plain new Socket() can therefore return false.
+                // A Network-bound SocketFactory materializes the socket and associates it
+                // with the real Wi-Fi network before we protect it from the VPN route.
+                remote = physicalNetwork.getSocketFactory().createSocket();
+            } else {
+                remote = new Socket();
+                // Force creation of the underlying file descriptor before protect().
+                remote.bind(new InetSocketAddress(0));
+            }
+        } catch (IOException e) {
+            Diagnostics.TCP_CONNECT_FAIL.incrementAndGet();
+            Diagnostics.error("Create TCP socket: " + e.getMessage());
+            writeReply(clientOut, 0x01, loopback4(), 0);
+            return;
+        }
+
         if (!vpnService.protect(remote)) {
             Diagnostics.TCP_CONNECT_FAIL.incrementAndGet();
-            Diagnostics.error("VpnService.protect(TCP) returned false");
+            Diagnostics.error("VpnService.protect(TCP) returned false after socket init");
             remote.close();
             writeReply(clientOut, 0x01, loopback4(), 0);
             return;
         }
-        if (physicalNetwork != null) {
-            physicalNetwork.bindSocket(remote);
-        }
+
         tcpSockets.add(remote);
         try {
             remote.setTcpNoDelay(true);
