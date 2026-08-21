@@ -5,10 +5,10 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
@@ -31,7 +31,7 @@ public final class SpeedVpnService extends VpnService {
     private static final String CHANNEL_ID = "noema_speed_channel";
     private static final int NOTIFICATION_ID = 7312;
     private static final int SOCKS_PORT = 10808;
-    private static final int MTU = 1500;
+    private static final int MTU = 1280;
     private static final String IPV4 = "198.18.0.1";
     private static final String IPV6 = "fd00::1";
 
@@ -89,14 +89,12 @@ public final class SpeedVpnService extends VpnService {
         startForeground(NOTIFICATION_ID, buildNotification());
 
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
-        Network underlying = cm != null ? cm.getActiveNetwork() : null;
-        LinkProperties link = (cm != null && underlying != null) ? cm.getLinkProperties(underlying) : null;
+        Network physical = findPhysicalNetwork(cm);
+        LinkProperties link = (cm != null && physical != null) ? cm.getLinkProperties(physical) : null;
 
-        socksServer = new LocalSocksServer(this, DOWNLOAD_LIMITER, SOCKS_PORT);
+        socksServer = new LocalSocksServer(this, DOWNLOAD_LIMITER, SOCKS_PORT, physical);
         socksServer.start();
 
-        // HEV's Android reference implementation uses a non-blocking TUN fd.
-        // A blocking fd can leave the native tun2socks engine alive while app traffic stalls.
         Builder builder = new Builder()
                 .setSession("NOEMA TV Speed Limiter")
                 .setMtu(MTU)
@@ -106,16 +104,10 @@ public final class SpeedVpnService extends VpnService {
                 .addRoute("0.0.0.0", 0)
                 .addRoute("::", 0);
 
-        // Keep NOEMA's local SOCKS egress outside its own VPN to prevent recursion.
-        try {
-            builder.addDisallowedApplication(getPackageName());
-        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
-            throw new IOException("Could not exclude NOEMA app from VPN", e);
-        }
-
-        if (underlying != null) {
-            builder.setUnderlyingNetworks(new Network[]{underlying});
-        }
+        // Do not pin the VPN itself to a possibly stale Network object on Android 9.
+        // The local SOCKS egress sockets are explicitly protected and bound to the
+        // selected physical network instead.
+        builder.setUnderlyingNetworks(null);
 
         boolean addedDns = false;
         if (link != null) {
@@ -176,7 +168,25 @@ public final class SpeedVpnService extends VpnService {
         }
 
         running = true;
-        Log.i(TAG, "Limiter started on dual-stack non-blocking TUN via physical network");
+        Log.i(TAG, "Limiter started; physical=" + physical + ", Android=" + Build.VERSION.SDK_INT);
+    }
+
+    private Network findPhysicalNetwork(ConnectivityManager cm) {
+        if (cm == null) return null;
+        Network fallback = null;
+        try {
+            for (Network n : cm.getAllNetworks()) {
+                NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+                if (caps == null) continue;
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
+                if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue;
+                if (fallback == null) fallback = n;
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return n;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not enumerate physical networks", e);
+        }
+        return fallback;
     }
 
     private synchronized void stopLimiter() {
