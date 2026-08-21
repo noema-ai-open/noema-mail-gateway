@@ -48,6 +48,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: noema-tv-speed-limiter-1.0-final01
+          name: noema-tv-speed-limiter-1.0-final02
           path: noema-tv-speed-limiter/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
