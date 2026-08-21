@@ -7,6 +7,12 @@ on:
     paths:
       - 'noema-tv-speed-limiter-src.tgz'
       - '.github/workflows/build-noema-tv-speed-limiter.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'noema-tv-speed-limiter-src.tgz'
+      - '.github/workflows/build-noema-tv-speed-limiter.yml'
   workflow_dispatch:
 
 jobs:
