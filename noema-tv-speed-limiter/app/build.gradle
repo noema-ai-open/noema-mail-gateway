@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace 'ai.noema.tvspeed'
-    compileSdk 37
+    compileSdkPreview 'CinnamonBun'
 
     defaultConfig {
         applicationId 'ai.noema.tvspeed'
