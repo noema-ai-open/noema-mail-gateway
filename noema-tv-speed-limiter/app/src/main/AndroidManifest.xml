@@ -11,8 +11,8 @@
 
     <application
         android:allowBackup="true"
-        android:banner="@drawable/tv_banner"
-        android:icon="@drawable/ic_noema"
+        android:banner="@drawable/tv_banner_final"
+        android:icon="@drawable/ic_noema_final"
         android:label="NOEMA TV Speed Limiter"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
