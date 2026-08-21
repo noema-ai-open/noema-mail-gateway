@@ -14,8 +14,8 @@ android {
         applicationId 'ai.noema.tvspeed'
         minSdk 26
         targetSdk 35
-        versionCode 7
-        versionName '1.0-final01'
+        versionCode 8
+        versionName '1.0-final02'
     }
 
     buildTypes {
@@ -36,6 +36,29 @@ android {
             useLegacyPackaging = true
         }
     }
+}
+
+def brandingSourceDir = file("${projectDir}/../branding")
+def brandingOutDir = file("${projectDir}/src/main/res/drawable-nodpi")
+
+tasks.register('materializeBranding') {
+    inputs.files(
+            file("${brandingSourceDir}/ic_noema_final.webp.b64"),
+            file("${brandingSourceDir}/tv_banner_final.webp.b64"))
+    outputs.files(
+            file("${brandingOutDir}/ic_noema_final.webp"),
+            file("${brandingOutDir}/tv_banner_final.webp"))
+
+    doLast {
+        brandingOutDir.mkdirs()
+        def decoder = java.util.Base64.getDecoder()
+        file("${brandingOutDir}/ic_noema_final.webp").bytes = decoder.decode(file("${brandingSourceDir}/ic_noema_final.webp.b64").text.trim())
+        file("${brandingOutDir}/tv_banner_final.webp").bytes = decoder.decode(file("${brandingSourceDir}/tv_banner_final.webp.b64").text.trim())
+    }
+}
+
+tasks.named('preBuild').configure {
+    dependsOn tasks.named('materializeBranding')
 }
 
 dependencies {
