@@ -1,5 +1,6 @@
 package ai.noema.tvspeed;
 
+import android.net.Network;
 import android.net.VpnService;
 import android.util.Log;
 
@@ -11,8 +12,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
-import java.net.Inet4Address;
-import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -27,8 +26,8 @@ import java.util.concurrent.Executors;
 
 /**
  * Minimal local SOCKS5 server used as the direct-to-internet egress for HEV tun2socks.
- * Remote sockets are protected from the Android VPN so traffic cannot loop back into TUN.
- * TCP CONNECT and UDP ASSOCIATE are supported.
+ * Remote sockets are protected from the Android VPN and, when available, explicitly
+ * bound to the selected physical network. TCP CONNECT and UDP ASSOCIATE are supported.
  */
 final class LocalSocksServer implements AutoCloseable {
     private static final String TAG = "NoemaSocks";
@@ -37,6 +36,7 @@ final class LocalSocksServer implements AutoCloseable {
 
     private final VpnService vpnService;
     private final RateLimiter downloadLimiter;
+    private final Network physicalNetwork;
     private final ExecutorService pool = Executors.newCachedThreadPool();
     private final Set<Socket> tcpSockets = ConcurrentHashMap.newKeySet();
     private final Set<DatagramSocket> udpSockets = ConcurrentHashMap.newKeySet();
@@ -46,10 +46,11 @@ final class LocalSocksServer implements AutoCloseable {
     private final int requestedPort;
     private volatile int boundPort;
 
-    LocalSocksServer(VpnService vpnService, RateLimiter downloadLimiter, int port) {
+    LocalSocksServer(VpnService vpnService, RateLimiter downloadLimiter, int port, Network physicalNetwork) {
         this.vpnService = vpnService;
         this.downloadLimiter = downloadLimiter;
         this.requestedPort = port;
+        this.physicalNetwork = physicalNetwork;
     }
 
     int getPort() {
@@ -131,12 +132,15 @@ final class LocalSocksServer implements AutoCloseable {
 
     private void handleConnect(Socket client, InputStream clientIn, OutputStream clientOut,
                                Address target, int port) throws IOException {
-        InetAddress remoteAddress = target.resolve();
+        InetAddress remoteAddress = target.resolve(physicalNetwork);
         Socket remote = new Socket();
         if (!vpnService.protect(remote)) {
             remote.close();
             writeReply(clientOut, 0x01, loopback4(), 0);
             return;
+        }
+        if (physicalNetwork != null) {
+            physicalNetwork.bindSocket(remote);
         }
         tcpSockets.add(remote);
         try {
@@ -153,6 +157,7 @@ final class LocalSocksServer implements AutoCloseable {
             up.start();
             relayDownload(remoteIn, clientOut);
         } catch (IOException e) {
+            Log.d(TAG, "TCP connect failed: " + remoteAddress + ":" + port + " " + e.getMessage());
             try { writeReply(clientOut, 0x05, loopback4(), 0); } catch (Exception ignored) {}
         } finally {
             tcpSockets.remove(remote);
@@ -205,6 +210,9 @@ final class LocalSocksServer implements AutoCloseable {
             writeReply(controlOut, 0x01, loopback4(), 0);
             return;
         }
+        if (physicalNetwork != null) {
+            physicalNetwork.bindSocket(internetSide);
+        }
         udpSockets.add(clientSide);
         udpSockets.add(internetSide);
         clientSide.setSoTimeout(0);
@@ -221,7 +229,7 @@ final class LocalSocksServer implements AutoCloseable {
                     clientSide.receive(packet);
                     lastClient[0] = new InetSocketAddress(packet.getAddress(), packet.getPort());
                     SocksUdpDatagram d = parseUdp(packet.getData(), packet.getOffset(), packet.getLength());
-                    InetAddress dst = d.address.resolve();
+                    InetAddress dst = d.address.resolve(physicalNetwork);
                     DatagramPacket out = new DatagramPacket(d.payload, d.payload.length, dst, d.port);
                     internetSide.send(out);
                     TrafficStatsStore.UP.addAndGet(d.payload.length);
@@ -395,8 +403,9 @@ final class LocalSocksServer implements AutoCloseable {
         private Address(String host, byte[] literal) { this.host = host; this.literal = literal; }
         static Address ofHost(String host) { return new Address(host, null); }
         static Address ofBytes(byte[] bytes) { return new Address(null, bytes); }
-        InetAddress resolve() throws IOException {
+        InetAddress resolve(Network network) throws IOException {
             if (literal != null) return InetAddress.getByAddress(literal);
+            if (network != null) return network.getByName(host);
             return InetAddress.getByName(host);
         }
     }
@@ -406,7 +415,9 @@ final class LocalSocksServer implements AutoCloseable {
         final int port;
         final byte[] payload;
         SocksUdpDatagram(Address address, int port, byte[] payload) {
-            this.address = address; this.port = port; this.payload = payload;
+            this.address = address;
+            this.port = port;
+            this.payload = payload;
         }
     }
 }
