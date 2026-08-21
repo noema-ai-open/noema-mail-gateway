@@ -1,6 +1,7 @@
 package ai.noema.tvspeed;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -53,7 +54,7 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.setPadding(dp(48), dp(32), dp(48), dp(32));
+        root.setPadding(dp(48), dp(28), dp(48), dp(28));
         root.setBackgroundColor(Color.rgb(10, 13, 18));
 
         TextView title = text("NOEMA TV Speed Limiter", 34, true);
@@ -64,20 +65,20 @@ public final class MainActivity extends Activity {
         sub.setTextColor(Color.rgb(170, 184, 201));
         sub.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams subLp = lpMatchWrap();
-        subLp.bottomMargin = dp(28);
+        subLp.bottomMargin = dp(22);
         root.addView(sub, subLp);
 
         status = text("", 22, true);
         status.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams stLp = lpMatchWrap();
-        stLp.bottomMargin = dp(14);
+        stLp.bottomMargin = dp(10);
         root.addView(status, stLp);
 
         stats = text("", 17, false);
         stats.setTextColor(Color.rgb(170, 184, 201));
         stats.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams statsLp = lpMatchWrap();
-        statsLp.bottomMargin = dp(34);
+        statsLp.bottomMargin = dp(26);
         root.addView(stats, statsLp);
 
         LinearLayout row = new LinearLayout(this);
@@ -89,11 +90,24 @@ public final class MainActivity extends Activity {
         addProfileButton(row, "Full Speed\nHome", 0);
         root.addView(row, lpMatchWrap());
 
-        TextView note = text("Limits aggregate download traffic on this device. Upload remains unrestricted.", 15, false);
+        Button debug = new Button(this);
+        debug.setText("Diagnostics");
+        debug.setTextSize(16);
+        debug.setAllCaps(false);
+        debug.setTextColor(Color.WHITE);
+        debug.setFocusable(true);
+        debug.setBackground(buttonBg(false));
+        debug.setOnFocusChangeListener((v, focused) -> v.setBackground(buttonBg(focused)));
+        debug.setOnClickListener(v -> showDiagnostics());
+        LinearLayout.LayoutParams debugLp = new LinearLayout.LayoutParams(dp(220), dp(64));
+        debugLp.topMargin = dp(22);
+        root.addView(debug, debugLp);
+
+        TextView note = text("Limits aggregate download traffic on this device. Upload remains unrestricted.", 14, false);
         note.setTextColor(Color.rgb(130, 145, 160));
         note.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams noteLp = lpMatchWrap();
-        noteLp.topMargin = dp(32);
+        noteLp.topMargin = dp(16);
         root.addView(note, noteLp);
 
         return root;
@@ -163,6 +177,20 @@ public final class MainActivity extends Activity {
             startService(i);
         }
         handler.postDelayed(this::refresh, 250);
+    }
+
+    private void showDiagnostics() {
+        TextView body = new TextView(this);
+        body.setText(Diagnostics.snapshot());
+        body.setTextSize(16);
+        body.setTextColor(Color.WHITE);
+        body.setPadding(dp(24), dp(14), dp(24), dp(14));
+        body.setTextIsSelectable(true);
+        new AlertDialog.Builder(this)
+                .setTitle("NOEMA Diagnostics")
+                .setView(body)
+                .setPositiveButton("Close", null)
+                .show();
     }
 
     private void refresh() {
