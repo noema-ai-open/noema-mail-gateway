@@ -32,6 +32,10 @@ The limiter is device-wide. Upload is currently unrestricted.
 
 To return to unrestricted internet, open NOEMA and select **Full Speed Home**.
 
+### If Play Protect warns about the APK
+
+A manually installed APK can trigger a warning because it did not come from Google Play. Only install APKs obtained from this project's GitHub Release page or a build you created yourself from the source code. Do not disable Play Protect globally.
+
 ## Diagnostics
 
 NOEMA includes a built-in **Diagnostics** screen for troubleshooting without ADB. It shows:
@@ -57,7 +61,8 @@ NOEMA has no account system, no analytics and no remote telemetry. The app does 
 
 - Android 8.0+ / API 26+
 - Android TV / Google TV
-- Tested during development on Xiaomi Mi TV Stick, Android 9 / API 28
+- Real-device test completed on **Xiaomi Mi TV Stick, Android 9 / API 28**
+- YouTube playback confirmed with the limiter active at **2 Mbit/s** and 480p
 
 ## Technical design
 
@@ -65,10 +70,22 @@ NOEMA has no account system, no analytics and no remote telemetry. The app does 
 
 The download shaper uses a process-wide token bucket so multiple simultaneous connections share one configured download budget without allowing a single large stream to reserve long periods of future bandwidth.
 
+The Android 9 TCP path creates the outbound socket on the physical network before applying `VpnService.protect()`. This avoids the `VpnService.protect(TCP) returned false` failure observed during testing on the Xiaomi Mi TV Stick.
+
 ## Open-source components
 
 NOEMA uses the HEV tun2socks implementation through `com.wgtunnel:hevtunnel`. HEV is licensed under the MIT License.
 
-## Status
+## Support / Donations
 
-`1.0-final01` is the first public-release candidate. A GitHub Release should only be published after the real-device streaming test passes with the limiter enabled.
+If NOEMA TV Speed Limiter is useful to you and you would like to support further development, donations are welcome.
+
+**Donation / payment e-mail:** `Swoellner.pay@gmx.de`
+
+Donations are voluntary and are not required to use the app.
+
+## Release status
+
+**Final 02** contains the confirmed Android 9 TCP fix, built-in diagnostics, the final launcher icon and the Android TV banner.
+
+Before reporting a networking problem, open **Diagnostics** and include the TCP/UDP counters and the last-error line in your issue report.
