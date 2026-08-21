@@ -43,8 +43,8 @@ def brandingOutDir = file("${projectDir}/src/main/res/drawable-nodpi")
 
 tasks.register('materializeBranding') {
     inputs.files(
-            file("${brandingSourceDir}/ic_noema_final.webp.b64"),
-            file("${brandingSourceDir}/tv_banner_final.webp.b64"))
+            file("${brandingSourceDir}/ic_noema_final.webp.b64.fixed"),
+            file("${brandingSourceDir}/tv_banner_final.webp.b64.fixed"))
     outputs.files(
             file("${brandingOutDir}/ic_noema_final.webp"),
             file("${brandingOutDir}/tv_banner_final.webp"))
@@ -52,8 +52,8 @@ tasks.register('materializeBranding') {
     doLast {
         brandingOutDir.mkdirs()
         def decoder = java.util.Base64.getDecoder()
-        file("${brandingOutDir}/ic_noema_final.webp").bytes = decoder.decode(file("${brandingSourceDir}/ic_noema_final.webp.b64").text.trim())
-        file("${brandingOutDir}/tv_banner_final.webp").bytes = decoder.decode(file("${brandingSourceDir}/tv_banner_final.webp.b64").text.trim())
+        file("${brandingOutDir}/ic_noema_final.webp").bytes = decoder.decode(file("${brandingSourceDir}/ic_noema_final.webp.b64.fixed").text.trim())
+        file("${brandingOutDir}/tv_banner_final.webp").bytes = decoder.decode(file("${brandingSourceDir}/tv_banner_final.webp.b64.fixed").text.trim())
     }
 }
 
