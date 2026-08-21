@@ -33,8 +33,8 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android 17 preview SDK
-        run: sdkmanager 'platforms;android-CinnamonBun' 'build-tools;36.0.0'
+      - name: Install Android 37.0 SDK
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
 
       - name: Gradle 9.4.1
         uses: gradle/actions/setup-gradle@v4
