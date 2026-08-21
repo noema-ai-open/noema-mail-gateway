@@ -73,6 +73,7 @@ public final class SpeedVpnService extends VpnService {
             try {
                 startLimiter();
             } catch (Exception e) {
+                Diagnostics.error(e.getClass().getSimpleName() + ": " + e.getMessage());
                 Log.e(TAG, "Failed to start limiter", e);
                 stopLimiter();
                 stopSelf();
@@ -85,15 +86,18 @@ public final class SpeedVpnService extends VpnService {
 
     private synchronized void startLimiter() throws IOException {
         if (running) return;
+        Diagnostics.resetSession();
         TrafficStatsStore.resetSession();
         startForeground(NOTIFICATION_ID, buildNotification());
 
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         Network physical = findPhysicalNetwork(cm);
+        Diagnostics.physical(describeNetwork(cm, physical));
         LinkProperties link = (cm != null && physical != null) ? cm.getLinkProperties(physical) : null;
 
         socksServer = new LocalSocksServer(this, DOWNLOAD_LIMITER, SOCKS_PORT, physical);
         socksServer.start();
+        Diagnostics.socks("listening 127.0.0.1:" + socksServer.getPort());
 
         Builder builder = new Builder()
                 .setSession("NOEMA TV Speed Limiter")
@@ -104,21 +108,25 @@ public final class SpeedVpnService extends VpnService {
                 .addRoute("0.0.0.0", 0)
                 .addRoute("::", 0);
 
-        // Do not pin the VPN itself to a possibly stale Network object on Android 9.
-        // The local SOCKS egress sockets are explicitly protected and bound to the
-        // selected physical network instead.
+        // Android 9 can behave badly when a VPN is pinned to a stale Network object.
+        // Egress sockets themselves are protected and explicitly bound to the physical network.
         builder.setUnderlyingNetworks(null);
 
         boolean addedDns = false;
+        StringBuilder dnsText = new StringBuilder();
         if (link != null) {
             for (InetAddress dns : link.getDnsServers()) {
                 builder.addDnsServer(dns);
+                if (dnsText.length() > 0) dnsText.append(", ");
+                dnsText.append(dns.getHostAddress());
                 addedDns = true;
             }
         }
         if (!addedDns) {
             builder.addDnsServer("1.1.1.1");
+            dnsText.append("1.1.1.1 fallback");
         }
+        Diagnostics.dns(dnsText.toString());
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(true);
@@ -126,6 +134,7 @@ public final class SpeedVpnService extends VpnService {
 
         tunFd = builder.establish();
         if (tunFd == null) throw new IOException("Android did not establish VPN TUN");
+        Diagnostics.tun("established fd=" + tunFd.getFd() + " mtu=" + MTU + " dual-stack");
 
         HevTunnelConfig config = new HevTunnelConfig(
                 MTU,
@@ -142,8 +151,14 @@ public final class SpeedVpnService extends VpnService {
         hevStartThread = new Thread(() -> {
             try {
                 boolean ok = TProxyService.TProxyStartService(configFile.getAbsolutePath(), fd);
-                if (!ok) Log.e(TAG, "HEV tunnel returned failure");
+                if (!ok) {
+                    Diagnostics.error("HEV tunnel returned failure");
+                    Diagnostics.hev("returned failure");
+                    Log.e(TAG, "HEV tunnel returned failure");
+                }
             } catch (Throwable t) {
+                Diagnostics.error("HEV " + t.getClass().getSimpleName() + ": " + t.getMessage());
+                Diagnostics.hev("crashed");
                 Log.e(TAG, "HEV tunnel crashed", t);
             }
         }, "noema-hev");
@@ -164,9 +179,11 @@ public final class SpeedVpnService extends VpnService {
             }
         }
         if (!hevRunning) {
+            Diagnostics.hev("did not start");
             throw new IOException("HEV tun2socks did not start");
         }
 
+        Diagnostics.hev("running");
         running = true;
         Log.i(TAG, "Limiter started; physical=" + physical + ", Android=" + Build.VERSION.SDK_INT);
     }
@@ -184,9 +201,24 @@ public final class SpeedVpnService extends VpnService {
                 if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return n;
             }
         } catch (Exception e) {
+            Diagnostics.error("Network enumerate: " + e.getMessage());
             Log.w(TAG, "Could not enumerate physical networks", e);
         }
         return fallback;
+    }
+
+    private String describeNetwork(ConnectivityManager cm, Network network) {
+        if (network == null) return "none";
+        try {
+            NetworkCapabilities caps = cm != null ? cm.getNetworkCapabilities(network) : null;
+            String transport = "other";
+            if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) transport = "Wi-Fi";
+            else if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) transport = "cellular";
+            boolean validated = caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            return network + " " + transport + " validated=" + validated;
+        } catch (Exception e) {
+            return network.toString();
+        }
     }
 
     private synchronized void stopLimiter() {
@@ -216,6 +248,7 @@ public final class SpeedVpnService extends VpnService {
 
     @Override
     public void onRevoke() {
+        Diagnostics.error("VPN permission revoked");
         stopLimiter();
         stopSelf();
         super.onRevoke();
